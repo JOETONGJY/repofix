@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# 测试与工具缓存
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 运行数据与本地状态（plan.md：不写入仓库）
+repofix-data/
+*.sqlite
+*.sqlite3
+*.db
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
