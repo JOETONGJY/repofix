@@ -1,6 +1,6 @@
 # RepoFix 实现规格 04：验收测试（Acceptance Tests）
 
-> 版本：V0.1（自 V1.3 架构文档提炼）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)。
+> 版本：V0.2（M1 集成评审修订：RT-08 ERROR→FAILED、RT-10 工具请求计数、TL-12 字节单位、GW-06 尝试计数；新增 RT-14 / TL-14 / ST-05）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)。
 > 用途：定义每个契约"实现完成"的判定标准。这些是**架构正确性测试**，不依赖 20–30 个 Benchmark 任务。
 
 ---
@@ -31,12 +31,13 @@
 | RT-05 | 只读调用失败后跟写入调用 | 写入调用 SKIPPED |
 | RT-06 | finish 与其他调用混合返回 | **整批拒绝**：无任何工具执行（含只读、无副作用）；finish 得 INVALID_ARGUMENT、其余 SKIPPED（batch_rejected_finish_mixed），配对完整；下一轮单独 finish 可接受 |
 | RT-07 | finish 后 Final Check 断言失败 | 状态 VERIFYING → RUNNING，反馈回流；预算内可继续 |
-| RT-08 | Final Check 环境错误 | COMPLETED + UNDETERMINABLE 报告；不重验 |
-| RT-09 | 状态转换表 | 表中每条合法转换可达、非法转换抛异常 |
-| RT-10 | 预算触顶（次数/Token/时间，参数化） | BUDGET_EXCEEDED，事件入库 |
+| RT-08 | Final Check 环境错误（Outcome=ERROR） | **FAILED**（不可恢复错误，fail_layer=WORKSPACE）；不重验；**不当作正常完成**（V0.2 修订；INCONCLUSIVE 才走正常完成路径） |
+| RT-09 | 状态转换表 | 表中每条合法转换可达、非法转换抛异常（含 VERIFYING→FAILED，V0.2） |
+| RT-10 | 预算触顶（次数/Token/时间，参数化） | BUDGET_EXCEEDED，事件入库；**工具预算计数对象 = 工具请求（含校验拒绝/权限拒绝/SKIPPED；控制动作不计入）**，实际执行次数另行记录（V0.2） |
 | RT-11 | 无进展 | 3 次重复注入 NO_PROGRESS_WARNING 一次；达 5 次终止 |
 | RT-12 | 越权操作（MVP 无审批） | 直接 PERMISSION_DENIED 回流，无任何审批交互；WAITING_APPROVAL 全程不出现 |
 | RT-13 | 模型仅输出文本（无工具调用、无 finish） | 不结束任务；按协议错误处理（同 RT-01 策略） |
+| RT-14 | 写入类调用参数校验失败 | 该调用 INVALID_ARGUMENT；**批次失败传播照常生效**——后续调用 SKIPPED，不执行（V0.2） |
 
 ### Tool System（对应 specs/03）
 
@@ -53,8 +54,9 @@
 | TL-09 | 白名单外命令（如 pip install / bash / python -c） | PERMISSION_DENIED |
 | TL-10 | apply_patch 新建文件：目标已存在 | CONFLICT，不覆盖 |
 | TL-11 | search_code 无匹配 | SUCCEEDED 空结果（非失败），批次继续 |
-| TL-12 | 输出超限（search>100 / read>200 行 / >32KiB） | truncated=true，保留开头/结尾/错误摘要 |
+| TL-12 | 输出超限（search>100 / read>200 行 / >32KiB） | truncated=true，保留开头/结尾/错误摘要；**32 KiB 按 UTF-8 字节计，含截断标记后总输出不越界（V0.2）** |
 | TL-13 | read_file 返回 sha256 | 与文件实际内容哈希一致，可被 apply_patch 版本校验使用 |
+| TL-14 | 无权限 actor 的畸形参数 | **PERMISSION_DENIED**（权限校验先于 Schema，拒绝结果不受参数内容影响，V0.2） |
 
 ### Workspace（对应 specs/03）
 
@@ -89,6 +91,7 @@
 | ST-02 | 崩溃注入：patch 未落盘 | 恢复对账 → 判定未生效，按规则重试或 SKIPPED |
 | ST-03 | 崩溃注入：文件处于无法解释状态 | 补记 UNKNOWN，Run 终止，标记人工确认 |
 | ST-04 | Trace 导出 | trajectory.jsonl 与 SQLite 内容一致；仅由导出产生 |
+| ST-05 | 执行器抛异常且副作用可能已发生 | **side_effect_status=UNKNOWN**；批次剩余调用不执行，Run 终止、不自动重试（V0.2） |
 
 ### Verifier / Evaluation（对应 specs/02）
 
@@ -112,7 +115,7 @@
 | GW-03 | call_id 丢失或重复 | 整个响应批次不可接纳；不自行生成 ID |
 | GW-04 | 响应不完整 / 达到输出长度限制 | 不执行工具，进入有限协议纠正 |
 | GW-05 | 供应商特殊字段（如 reasoning） | 下一轮请求中被正确保留，不被丢弃 |
-| GW-06 | 429 / 5xx / 网络失败 | 退避重试生效；实际 API 次数计入预算；超 model_retry_limit 终止 |
+| GW-06 | 429 / 5xx / 网络失败 | 退避重试生效；**每次真实 API 请求尝试（含失败）计入预算（V0.2）**；超 model_retry_limit 终止 |
 | GW-07 | Usage 缺失 | 标记未知，不虚构 Token / 费用 |
 
 ### Review Agent（对应 design/02，只保留影响架构正确性的场景）

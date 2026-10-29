@@ -1,6 +1,6 @@
 # RepoFix 实现规格 03：工具与工作区（Tools & Workspace）
 
-> 版本：V0.2（对齐 design/03–04）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[../design/04-tool-system.md](../design/04-tool-system.md)。
+> 版本：V0.3（M1 集成评审修订：① 校验顺序权限优先；② 输出截断双层限制——Dispatcher 32 KiB UTF-8 字节硬上限 + Context 层 2000 字符软预算）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[../design/04-tool-system.md](../design/04-tool-system.md)。
 > 依赖：[01-contracts.md](01-contracts.md)。
 
 ---
@@ -11,8 +11,11 @@
 - **静态注册**：工具在程序启动时注册；不支持模型运行中安装、发现或注册新工具；不支持 MCP。
 - **权限按 actor 区分**：Main 与 Reviewer 复用同一 Registry，按角色生成不同工具视图——Reviewer 视图中不存在 `apply_patch / run_command / finish`。只读约束由注册表 + Workspace 权限共同保证，**不能仅写在 System Prompt 中**。Agent 角色由 Runtime 设置，不能来自模型参数。
 - 副作用类别决定调度行为（见 02）：`read_only` 失败后同类可继续；`write` / `process` 失败即中止批次。
-- **校验顺序：存在性 → Schema → 权限校验 → 预算 → 执行。**
-- 所有路径相对工作区副本根；所有输出截断由 RunConfig.tool_output_truncate_chars 控制（单次返回给模型初始上限 **32 KiB**，超限 `truncated=true` 并保留有价值的开头 / 结尾 / 错误摘要）。
+- **校验顺序（V0.3 修订，对齐 design/04 四层校验）：存在性 → 权限校验 → Schema 校验 → 语义前置条件 → 预算 → 执行。** 无权限的调用不解析参数——如 Reviewer 请求 `apply_patch`，即使参数畸形也返回 `PERMISSION_DENIED`，拒绝结果不受参数内容影响。
+- 所有路径相对工作区副本根。**输出截断为双层限制（V0.3 裁决）**：
+  - **Tool Dispatcher 硬上限 = 32 KiB（按 UTF-8 字节计）**：截断标记计入上限，最终输出（含标记）不得越界；超限 `truncated=true`，保留有价值的开头 / 结尾 / 错误摘要。
+  - **Context Engine 软预算 = RunConfig.tool_output_truncate_chars（默认 2000 字符）**：在上下文构造时按内容重要性与剩余预算取舍，**不得无条件截断所有工具结果**（否则 read_file 稍长的源文件时模型总看不到关键函数）。
+  - 完整输出（stdout / stderr 全文）存 SQLite，不进模型上下文（specs/01）。
 
 ## 七个动作契约
 

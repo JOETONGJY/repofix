@@ -35,26 +35,44 @@ class BudgetViolation(Exception):
 
 
 class BudgetTracker:
-    """预算计数：模型调用在 Runner 计数；工具调用全局计数（跨 actor）；墙钟用注入 Clock。"""
+    """预算计数（specs/02 V0.2）。
+
+    - 模型预算：每次真实 API 请求尝试（含失败与重试）在发出前计数；Usage 只从成功响应记录。
+    - 工具预算：计数对象 = 进入调度处理的工具请求数（含校验拒绝/权限拒绝/SKIPPED；
+      控制动作不计入）；实际执行次数另行记录，防止非法调用绕过预算。
+    - 墙钟用注入 Clock。
+    """
 
     def __init__(self, config: RunConfig, clock: Clock):
         self._config = config
         self._clock = clock
         self._started_at = clock.now()
-        self.model_calls = 0
-        self.tool_calls = 0
+        self.model_calls = 0  # 模型 API 请求尝试数（含失败）
+        self.tool_calls = 0  # 工具请求数（预算口径）
+        self.tool_executions = 0  # 实际执行次数（效率统计）
         self.total_tokens = 0
 
     def tool_calls_remaining(self) -> int:
         return max(0, self._config.max_tool_calls - self.tool_calls)
 
     def count_tool_call(self) -> None:
+        """计入一个工具请求（无论后续是否被拒绝或跳过）。"""
         self.tool_calls += 1
 
+    def count_tool_execution(self) -> None:
+        """计入一次实际执行（仅真正 dispatched 的调用）。"""
+        self.tool_executions += 1
+
     def count_model_call(self, usage: dict | None = None) -> None:
+        """计入一次模型 API 请求尝试。usage 仅在成功响应时传入。"""
         self.model_calls += 1
-        if usage and isinstance(usage.get("total_tokens"), int):
-            self.total_tokens += usage["total_tokens"]
+        if usage:
+            self._accumulate_tokens(usage)
+
+    def record_usage(self, usage: dict | None = None) -> None:
+        """成功响应后记录 Token 用量（与尝试计数分离；缺失时标记未知，不虚构）。"""
+        if usage:
+            self._accumulate_tokens(usage)
 
     def check_model_budget(self) -> None:
         """发起模型调用前检查；触顶抛 BudgetViolation（Runner 转 BUDGET_EXCEEDED）。"""
@@ -76,6 +94,10 @@ class BudgetTracker:
 
     def _wall_clock_exceeded(self) -> bool:
         return self.elapsed_seconds() >= self._config.max_duration_seconds
+
+    def _accumulate_tokens(self, usage: dict) -> None:
+        if isinstance(usage.get("total_tokens"), int):
+            self.total_tokens += usage["total_tokens"]
 
 
 class GuardSignalType(str, Enum):

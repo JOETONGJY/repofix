@@ -121,7 +121,7 @@ class RunConfig(BaseModel):
     model_retry_limit: int = 2             # 单次请求最多额外重试次数
     no_progress_repeat_threshold: int = 3
     no_progress_terminate_threshold: int = 5
-    tool_output_truncate_chars: int = 2000
+    tool_output_truncate_chars: int = 2000 # Context 层工具输出软预算（字符）；Dispatcher 另有 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
     review_enabled: bool = True
     max_reviewer_model_calls: int = 3
@@ -263,8 +263,8 @@ class RunResult(BaseModel):
     patch_path: str | None = None
     trace_path: str | None = None
     test_report_path: str | None = None
-    model_calls: int
-    tool_calls: int
+    model_calls: int                  # 模型 API 请求尝试次数（含失败与重试，specs/02 V0.2）
+    tool_calls: int                   # 工具请求数（预算口径：含校验拒绝/权限拒绝/SKIPPED；控制动作不计入；实际执行次数另存事件，specs/02 V0.2）
     token_usage: dict
     duration_ms: int
     review_status: str | None = None  # APPROVED / FINDINGS / INCONCLUSIVE / NOT_RUN（design/02）

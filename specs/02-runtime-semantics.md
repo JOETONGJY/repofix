@@ -1,6 +1,6 @@
 # RepoFix 实现规格 02：Runtime 语义（Runtime Semantics）
 
-> 版本：V0.1（自 V1.3 架构文档提炼）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)。
+> 版本：V0.2（M1 集成评审修订：① 校验顺序改为权限优先；② VerificationOutcome.ERROR 为不可恢复错误 → Run FAILED；③ 工具预算计数对象 = 工具请求；④ 模型预算按真实 API 请求尝试计数；⑤ 清理 finish 旧契约残留）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)。
 > 依赖：[01-contracts.md](01-contracts.md) 的全部枚举与模型。工具定义见 [03-tools-and-workspace.md](03-tools-and-workspace.md)。
 
 ---
@@ -26,7 +26,8 @@
 | REVIEWING | Reviewer 不可用 / INCONCLUSIVE | COMPLETED | 保留确定性验证结果，报告标记审查未完成 |
 | VERIFYING | Final Check 通过 | COMPLETED | 产出 Patch + Trace |
 | VERIFYING | Final Check 断言失败 | RUNNING | 失败反馈回流，预算内继续 |
-| VERIFYING | 无法验证（环境/超时） | COMPLETED | 附 `UNDETERMINABLE` 报告；Evaluation 记 INCONCLUSIVE |
+| VERIFYING | 无可用测试（Outcome=INCONCLUSIVE） | COMPLETED | 报告注明未完成验证；Evaluation 记 INCONCLUSIVE，不能宣称验证通过 |
+| VERIFYING | 验证环境 / 组件错误（Outcome=ERROR） | FAILED | **V0.2 修订：不可恢复错误**——终止任务（fail_layer=WORKSPACE），不重验，不当作正常完成；区别于 INCONCLUSIVE 的正常完成路径 |
 | RUNNING | 不可恢复错误 | FAILED | fail_layer 按四层归属填写 |
 | RUNNING | 用户取消 | CANCELLED | 终止进程树（见 03） |
 | RUNNING | 任一预算触顶 | BUDGET_EXCEEDED | |
@@ -46,18 +47,20 @@
 模型一次响应可能返回 0 / 1 / N 个 ToolCall。Runtime 拥有调度权，按以下规则处理：
 
 1. 按模型返回的顺序**逐个**执行，不做依赖推断，不做并行。
-2. 单个调用处理链：存在性 → Schema 校验 → 权限校验 → 预算 → 执行。
+2. 单个调用处理链：**存在性 → 权限校验 → Schema 校验 → 语义前置条件 → 预算 → 执行**（V0.2 修订：权限先于 Schema——无权限调用不解析参数，拒绝结果不受参数内容影响，如 Reviewer 请求 `apply_patch` 无论参数是否畸形一律 `PERMISSION_DENIED`；Workspace 强制约束位于执行层，见 specs/03 四层校验）。
 3. **只读调用**（list_files / search_code / read_file）失败：后续只读调用可继续；其后若有**写入类调用** → 一律 SKIPPED。
 4. **写入类调用**（apply_patch / run_command）失败：本批次所有剩余调用 → SKIPPED（`skipped_reason="batch_aborted_after_write_failure"`）。
+5. **校验 / 权限拒绝同样触发批次失败传播（V0.2 修订）**：被拒绝调用（INVALID_ARGUMENT / PERMISSION_DENIED）的失败归类按其工具**副作用类别**判定——写入 / 进程类被拒 → 本批次剩余全部 SKIPPED（`batch_aborted_after_write_failure`）；只读类被拒 → 后续写入类 SKIPPED（`batch_aborted_after_read_failure`）、只读可继续。拒绝原因保留在各自 ToolResult 中回流模型。
 5. **`finish` 必须单独成批（V1.10 修订：整批拒绝）**：若与其他调用混合返回，Runtime **拒绝整个批次**——本批次不执行任何工具调用（含只读，无任何副作用）：finish 调用返回 `INVALID_ARGUMENT`（错误消息说明 finish 必须单独提交），其余调用全部返回 `SKIPPED`（`skipped_reason="batch_rejected_finish_mixed"`），配对完整。理由：`apply_patch + finish` 混合时，"执行修改只拒 finish"会留下已修改却未走验证的状态；整批拒绝语义确定，不猜测模型意图。模型可在下一轮重新提交。
 6. 每个调用（含 SKIPPED）的结果必须按模型协议与 call_id **一一配对**返回，不得构造不完整的历史消息。
 7. 批次结束：全部结果写入事件与 WorkingState 更新，然后进入下一 Turn。
+8. **执行器异常的副作用未知（V0.2 修订）**：工具执行过程中抛出异常时，**不能仅凭异常认定没有副作用**（文件可能已被修改）——持久化状态记 `side_effect_status=UNKNOWN`，停止本批次剩余调用与后续执行，Run 终止（不自动重试，保留诊断信息）。
 
 ## Finish 协议
 
-- 收到**单独成批**的有效 `finish(summary, changed_files)` → 状态转 `VERIFYING`。
+- 收到**单独成批**的有效 `finish(summary)`（V0.2 清理：finish 契约唯一字段 = summary，CONS-04；修改清单由 Runtime 从 WorkingState 与工作区实际状态推导）→ 状态转 `VERIFYING`。
 - **Final Check**（每次 finish 只执行一次，不无限重验）：
-  1. 校验 `changed_files` 与 WorkingState.modified_files 一致（不符 → 断言失败反馈）。
+  1. PatchValidator：候选 Diff 为空 / 格式无效 → FAILED 反馈（不信任模型自报修改范围）。
   2. 运行可见测试（Verifier；基线对比见 03 的 Preflight）。
 - 结果分支：
   - 通过且 `review_enabled=False` → `COMPLETED`（单 Agent Baseline 路径）。
@@ -76,6 +79,10 @@
 | 墙钟时间 | config.max_duration_seconds（默认 1200） | BUDGET_EXCEEDED |
 | 无进展检测 | 「同工具 + 规范化参数哈希相同 + 目标文件未变化」连续 repeat_threshold 次；**阈值唯一权威 = specs/01 RunConfig 默认值（repeat=3 / terminate=5，可配置），Runtime 不得硬编码另一套数字** | 达 repeat → 注入一次 `NO_PROGRESS_WARNING`；累计达 terminate → FAILED（fail_layer=TOOL_SYSTEM，reason=no_progress） |
 
+**预算计数对象（V0.2 修订）**：
+- **工具预算**：计数对象 = **进入调度处理的工具请求数**——含校验拒绝、权限拒绝与 SKIPPED 的调用（防止大量非法调用绕过预算）；控制动作（finish / submit_review）不计入工具预算；**实际执行次数另行记录**（`tool_executions`），供效率统计使用。
+- **模型预算**：**每次真实 API 请求尝试（含失败与重试）在发出前计入**模型预算，而不是只统计成功响应；M3 Gateway 的内部重试通过同一计数钩子上报。
+
 规范化参数哈希：`sha256(tool_name + json.dumps(args, sort_keys=True))`。目标文件未变化 = 相关文件的 mtime/hash 与上次相同。
 
 ## 重试责任表
@@ -84,6 +91,8 @@
 | --- | --- | --- | --- |
 | Model Client（LLM Gateway） | 429 / 5xx / 超时 / 连接错误；指数退避，尊重 Retry-After | model_retry_limit（默认 **2**） | 认证失败（终止，MODEL_API）；协议解析异常（携带错误信息重发 **1** 次） |
 | Tool 执行 | `EXECUTION_ERROR` 且 retryable=True（基础设施瞬态） | 1（重试前核对副作用状态） | INVALID_ARGUMENT、PERMISSION_DENIED、CONFLICT、TOOL_NOT_FOUND（结构化反馈给模型）；业务失败（绝不机械重试） |
+
+> **模型预算计数位置（V0.2）**：每次真实 API 请求尝试（含 429/5xx 失败与重试）都在发出前计入模型预算；Usage 仍只从成功响应记录，缺失时标记未知、不虚构。
 
 ## Final Verification 规则（design/08）
 
@@ -97,9 +106,9 @@
 | Patch 为空或格式无效 | FAILED | 反馈 Main 修正 |
 | 有效测试断言失败 | FAILED | 反馈 Main 修正 |
 | 没有配置且无法自动发现可用测试 | INCONCLUSIVE | 可进入 Review，**不能宣称验证通过** |
-| 指定测试命令无法启动 | ERROR | 终止任务，记录环境/配置错误 |
-| 测试超时且无法确定状态 | ERROR | 终止任务，不当作代码逻辑失败 |
-| 验证期间候选代码发生变化 | ERROR | 旧验证失效，不能接受 Finish |
+| 指定测试命令无法启动 | ERROR | **Run FAILED（V0.2：不可恢复错误，fail_layer=WORKSPACE）**，记录环境/配置错误，不当作正常完成 |
+| 测试超时且无法确定状态 | ERROR | **Run FAILED（V0.2）**，不当作代码逻辑失败，不当作正常完成 |
+| 验证期间候选代码发生变化 | ERROR | 旧验证失效，不能接受 Finish；**Run FAILED（V0.2）** |
 
 **基线按测试身份比较，不按失败数量**：基线通过+最终通过=可判定；基线失败+最终全通过=可判定；基线通过+最终失败=回归或修复失败；目标 Bug 测试基线失败+最终仍失败=**修复未完成**；基线无关失败仍在→保留不确定性；无法可靠识别测试差异→不定为成功。**不能把基线失败测试全部排除出验收**（有些正是目标 Bug 的测试）。
 

@@ -1,6 +1,6 @@
 # RepoFix 详细设计 04：Tool System
 
-> 版本：V1.0（已冻结；ADR-06 / ADR-08 细化）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[00-global-contracts.md](00-global-contracts.md)、[03-llm-gateway.md](03-llm-gateway.md)。
+> 版本：V1.1（M1 集成评审修订：权限校验先于 Schema；输出截断双层限制；执行器异常的副作用未知语义）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[00-global-contracts.md](00-global-contracts.md)、[03-llm-gateway.md](03-llm-gateway.md)。
 > 模块定位：把模型提出的动作转换成受校验、受权限约束、可审计的执行结果。参考 OpenHands 的 Action → Executor → Observation 思想，不复刻完整 SDK。
 
 ---
@@ -122,13 +122,14 @@ Pydantic 实现第二层，**不能代替后三层**。Schema 用严格模式：
 | Patch Hash 冲突 | `FAILED / CONFLICT` | 停止批次，反馈模型 |
 | Shell 进程无法启动 | `FAILED / EXECUTION_ERROR` | 停止批次 |
 | 执行超时且副作用未知 | 持久化 `UNKNOWN` | 停止 Run，不盲目重试 |
+| 执行器抛异常（副作用可能已发生，V1.1） | `FAILED / EXECUTION_ERROR` | **持久化 `side_effect_status=UNKNOWN`**——不能仅凭异常认定无副作用；停止批次与 Run，不自动重试 |
 | Reviewer 请求 `apply_patch` | `FAILED / PERMISSION_DENIED` | 不执行，工作区不受影响 |
 
 **工具的执行状态与命令的业务退出状态必须分离**——这使工具故障率统计可靠，不会把测试断言失败误算为系统故障。
 
-### 输出控制
+**输出控制（V1.1 修订：双层限制）**：Search 默认最多 100 条结果；Read 默认最多 200 行；**Tool Dispatcher 硬上限 = 32 KiB（按 UTF-8 字节计，截断标记计入上限、最终输出不得越界）**，超限明确 `truncated=true`，保留有价值的开头、结尾或错误摘要；**Context 层软预算 = RunConfig.tool_output_truncate_chars（默认 2000 字符）**，在上下文构造时按内容重要性与剩余预算取舍，**不得无条件截断所有工具结果**（否则 read_file 稍长的源文件时模型总看不到关键函数）。完整日志作为受限大小的运行产物保存，不无限写入 SQLite 或模型上下文。完整运行日志 ≠ 模型可见输出。
 
-Search 默认最多 100 条结果；Read 默认最多 200 行；单次工具返回给模型的内容初始限制约 **32 KiB**；超限明确 `truncated=true`，保留有价值的开头、结尾或错误摘要；完整日志作为受限大小的运行产物保存，不无限写入 SQLite 或模型上下文。完整运行日志 ≠ 模型可见输出，截断与保留策略在 Context 模块统一。
+**校验顺序（V1.1 明确）**：权限校验先于参数 Schema——无权限调用不解析参数（Reviewer 请求 `apply_patch` 无论参数是否畸形一律 `PERMISSION_DENIED`），拒绝结果稳定、不受参数内容影响，与双 Agent 角色隔离设计一致。
 
 ## 六、双 Agent 权限的真正实现
 

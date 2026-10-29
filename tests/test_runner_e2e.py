@@ -277,7 +277,8 @@ class TestVerificationLoop:
         assert feedback, "验证失败反馈必须回流到下一轮请求"
         assert "test_empty_password" in feedback[0]["content"]
 
-    def test_rt08_environment_error_completes_without_review_or_reverify(self, registry, config):
+    def test_rt08_environment_error_is_unrecoverable_failure(self, registry, config):
+        """RT-08（V0.2）：验证环境错误 → Run FAILED，不当作正常完成，不重验。"""
         error_report = VerificationReport(
             candidate_revision="m1-no-workspace",
             patch_status=PatchStatus.VALID,
@@ -289,8 +290,11 @@ class TestVerificationLoop:
         responses = [model_response("d1", [make_tool_call("f1", "finish", summary="done")])]
         runner, store = build_runner(responses, [error_report], registry, config)
         result = runner.run()
-        assert result.runtime_status is RunStatus.COMPLETED
-        assert result.verification_status is VerificationStatus.INCONCLUSIVE  # 无法验证 ≠ 通过
+        assert result.runtime_status is RunStatus.FAILED
+        assert result.termination_reason == "verification_error"
+        assert result.verification_status is VerificationStatus.INCONCLUSIVE  # 验证未能完成
+        run = store.get_run(RUN_ID)
+        assert run["fail_layer"] == FailureLayer.WORKSPACE.value
         events = store.get_events(RUN_ID)
         assert sum(1 for e in events if e.type is EventType.VERIFICATION_FINISHED) == 1  # 不重验
 
@@ -346,3 +350,47 @@ class TestBudgetAndGuard:
         assert "run_command" not in reviewer_tools
         assert "finish" not in reviewer_tools
         assert {"list_files", "search_code", "read_file", "submit_review"} <= set(reviewer_tools)
+
+
+class TestModelAttemptCounting:
+    def test_failed_api_attempt_counts_toward_model_budget(self, registry, config):
+        """GW-06（V0.2）：失败的 API 请求尝试也计入模型预算（发出前计数）。"""
+        from repofix.gateway import ModelTransientError
+
+        responses = [ModelTransientError("429 too many requests")]
+        runner, store = build_runner(responses, [], registry, config)
+        result = runner.run()
+        assert result.runtime_status is RunStatus.FAILED
+        assert result.termination_reason == "model_client_error"
+        assert result.model_calls == 1  # 失败尝试已计数
+        run = store.get_run(RUN_ID)
+        assert run["fail_layer"] == FailureLayer.MODEL_API.value
+
+
+class TestExecutorCrashSideEffectUnknown:
+    def test_st05_executor_crash_terminates_run_with_unknown(self, registry, config):
+        """ST-05（V0.2）：执行器异常且副作用可能已发生 → UNKNOWN + Run 终止，不自动重试。"""
+        executor = FakeToolExecutor()
+        executor.register_error("apply_patch", RuntimeError("disk boom after write"))
+        responses = [
+            model_response("d1", [make_tool_call("c1", "read_file", path="auth.py")]),
+            model_response(
+                "d2",
+                [
+                    make_tool_call("c2", "apply_patch", path="auth.py", patch="x"),
+                    make_tool_call("c3", "read_file", path="b.py"),
+                ],
+            ),
+        ]
+        runner, store = build_runner(responses, [], registry, config, executor=executor)
+        result = runner.run()
+        assert result.runtime_status is RunStatus.FAILED
+        assert result.termination_reason == "tool_side_effect_unknown"
+        run = store.get_run(RUN_ID)
+        assert run["fail_layer"] == FailureLayer.WORKSPACE.value
+        rows = {row["call_id"]: row for row in store.list_tool_calls(RUN_ID)}
+        # 不能仅凭异常认定无副作用
+        assert rows["c2"]["side_effect_status"] == "unknown"
+        # 剩余调用不执行
+        assert rows["c3"]["side_effect_status"] == "skipped"
+        assert [name for name, _ in executor.calls] == ["read_file", "apply_patch"]

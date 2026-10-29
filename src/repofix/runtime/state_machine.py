@@ -16,8 +16,14 @@ _ALLOWED_TRANSITIONS: dict[RunStatus, set[RunStatus]] = {
         RunStatus.CANCELLED,
         RunStatus.BUDGET_EXCEEDED,
     },
-    # 验证通过 → REVIEWING 或 COMPLETED（review_enabled=False）；断言失败 → RUNNING
-    RunStatus.VERIFYING: {RunStatus.REVIEWING, RunStatus.COMPLETED, RunStatus.RUNNING},
+    # 验证通过 → REVIEWING 或 COMPLETED（review_enabled=False）；断言失败 → RUNNING；
+    # 验证环境 / 组件错误（ERROR）→ FAILED（specs/02 V0.2：不可恢复错误）
+    RunStatus.VERIFYING: {
+        RunStatus.REVIEWING,
+        RunStatus.COMPLETED,
+        RunStatus.RUNNING,
+        RunStatus.FAILED,
+    },
     # APPROVED → COMPLETED；FINDINGS → RUNNING（修正后再次 VERIFYING，不二次 Review）
     RunStatus.REVIEWING: {RunStatus.COMPLETED, RunStatus.RUNNING},
 }

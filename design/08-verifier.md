@@ -1,6 +1,6 @@
 # RepoFix 详细设计 08：Verifier
 
-> 版本：V1.0（已冻结；ADR-13 定稿）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[00-global-contracts.md](00-global-contracts.md)、[02-agent-runtime.md](02-agent-runtime.md)。
+> 版本：V1.1（M1 集成评审修订：明确 ERROR 为不可恢复错误 → Run FAILED，区别于 INCONCLUSIVE 的正常完成路径）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[00-global-contracts.md](00-global-contracts.md)、[02-agent-runtime.md](02-agent-runtime.md)。
 > 核心定位：**确定性验证组件，不是第三个 Agent**——不调用 LLM 判断代码正确性，不维护推理历史；依据真实工作区、Patch 和测试执行结果生成 `VerificationReport`。
 
 ---
@@ -91,6 +91,8 @@ Main 提交 finish → Runtime 进入 VERIFYING → 计算候选代码版本
 | 验证期间候选代码发生变化 | `ERROR` | 旧验证失效，不能接受 Finish |
 
 **没有测试不代表测试失败，也不代表测试通过**——这是保留 `INCONCLUSIVE` 的原因。
+
+**ERROR 与 INCONCLUSIVE 的硬边界（V1.1 修订）**：`ERROR`（指定测试命令无法启动 / 测试超时状态不明 / 验证器组件故障 / 验证期间候选代码变化）是**不可恢复错误**——Run 终止为 `FAILED`（fail_layer=WORKSPACE），**不得接受 Finish、不得记为正常完成**；只有 `INCONCLUSIVE`（确实没有可用测试）允许走正常完成路径，且不能宣称验证通过。验证器组件自身抛出异常同样按 `ERROR` 处理，不伪装成任何验证结论。
 
 **Bug 修复模式必须产生实际的、有效的代码变化才能接受 Finish**；纯解释型或无需修改的任务不属于首版验收范围。
 

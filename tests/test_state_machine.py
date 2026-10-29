@@ -13,8 +13,9 @@ LEGAL_TRANSITIONS = [
     (RunStatus.RUNNING, RunStatus.CANCELLED),  # 用户取消
     (RunStatus.RUNNING, RunStatus.BUDGET_EXCEEDED),  # 预算触顶
     (RunStatus.VERIFYING, RunStatus.REVIEWING),  # 验证通过且 review_enabled
-    (RunStatus.VERIFYING, RunStatus.COMPLETED),  # 验证通过（Baseline）/ 无法验证
+    (RunStatus.VERIFYING, RunStatus.COMPLETED),  # 验证通过（Baseline）/ 无可用测试（INCONCLUSIVE）
     (RunStatus.VERIFYING, RunStatus.RUNNING),  # 断言失败反馈回流
+    (RunStatus.VERIFYING, RunStatus.FAILED),  # 验证环境/组件错误（ERROR，specs/02 V0.2：不可恢复）
     (RunStatus.REVIEWING, RunStatus.COMPLETED),  # APPROVED / INCONCLUSIVE
     (RunStatus.REVIEWING, RunStatus.RUNNING),  # FINDINGS 反馈修正
 ]
@@ -24,9 +25,9 @@ ILLEGAL_TRANSITIONS = [
     (RunStatus.CREATED, RunStatus.COMPLETED),
     (RunStatus.RUNNING, RunStatus.REVIEWING),  # 必须经过 VERIFYING
     (RunStatus.RUNNING, RunStatus.CREATED),
-    (RunStatus.VERIFYING, RunStatus.FAILED),  # 转换表未定义该路径
     (RunStatus.VERIFYING, RunStatus.CANCELLED),
     (RunStatus.REVIEWING, RunStatus.VERIFYING),  # 第二次 VERIFYING 不再触发 Review
+    (RunStatus.REVIEWING, RunStatus.FAILED),
     (RunStatus.COMPLETED, RunStatus.RUNNING),  # 终态不可离开
     (RunStatus.FAILED, RunStatus.RUNNING),
     (RunStatus.CANCELLED, RunStatus.COMPLETED),

@@ -34,9 +34,12 @@ class FakeClock:
 
 
 class ScriptedModelClient:
-    """按脚本依次返回预设 ModelResponse；记录收到的请求供配对断言。"""
+    """按脚本依次返回预设 ModelResponse；记录收到的请求供配对断言。
 
-    def __init__(self, responses: list[ModelResponse]):
+    脚本项也可以是 Exception 实例——complete() 时抛出（模拟 API 失败）。
+    """
+
+    def __init__(self, responses: list):
         self._responses = list(responses)
         self.requests: list[ModelRequest] = []
 
@@ -44,24 +47,36 @@ class ScriptedModelClient:
         self.requests.append(request)
         if not self._responses:
             raise AssertionError("ScriptedModelClient script exhausted")
-        return self._responses.pop(0)
+        item = self._responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 class FakeToolExecutor:
-    """与未来真实 Workspace 同接口。预设结果，不产生真实副作用。"""
+    """与未来真实 Workspace 同接口。预设结果，不产生真实副作用。
+
+    register_error 可让指定工具在执行时抛异常（模拟执行器崩溃——副作用是否已发生未知）。
+    """
 
     def __init__(self, results: dict[str, ToolResult] | None = None):
         self._results = results or {}
+        self._errors: dict[str, Exception] = {}
         self.calls: list[tuple[str, dict]] = []
         self.observers: list = []  # 执行瞬间回调（用于意图先行断言）
 
     def register(self, tool_name: str, result: ToolResult) -> None:
         self._results[tool_name] = result
 
+    def register_error(self, tool_name: str, exc: Exception) -> None:
+        self._errors[tool_name] = exc
+
     def execute(self, tool_name: str, arguments: dict) -> ToolResult:
         self.calls.append((tool_name, arguments))
         for observer in self.observers:
             observer(tool_name, arguments)
+        if tool_name in self._errors:
+            raise self._errors[tool_name]
         template = self._results.get(tool_name)
         if template is None:
             # call_id 由 Dispatcher 统一绑定；Fake 用占位值构造

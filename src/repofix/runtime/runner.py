@@ -132,7 +132,6 @@ class AgentRunner:
                     fail_layer=FailureLayer.MODEL_API,
                 )
             self._step += 1
-            self._budget.count_model_call(response.usage)
             self._accumulate_usage(response.usage)
             self._append_event(
                 EventType.MODEL_RESPONDED,
@@ -175,15 +174,31 @@ class AgentRunner:
 
             if outcome.control_tool == FINISH_TOOL:
                 self._record_control_action(outcome)
-                if self._handle_finish():
+                finish_outcome = self._handle_finish()
+                if finish_outcome == "accepted":
                     return self._finish(
                         RunStatus.COMPLETED,
                         "finish_accepted",
                         verification_status=self._verification_status,
                     )
+                if finish_outcome == "error":
+                    # VerificationOutcome.ERROR：不可恢复错误，不当作正常完成（specs/02 V0.2）
+                    return self._finish(
+                        RunStatus.FAILED,
+                        "verification_error",
+                        fail_layer=FailureLayer.WORKSPACE,
+                        verification_status=self._verification_status,
+                    )
                 continue  # 验证失败反馈已回流，回 RUNNING 继续修复（RT-07）
 
             self._context.record_results(outcome.results, response.tool_calls)
+            if outcome.side_effect_unknown:
+                # 执行器异常且副作用未知：终止 Run，不自动重试（specs/02 V0.2 规则 8）
+                return self._finish(
+                    RunStatus.FAILED,
+                    "tool_side_effect_unknown",
+                    fail_layer=FailureLayer.WORKSPACE,
+                )
             self._update_working_state(response.tool_calls, outcome.results)
             executed = [
                 call
@@ -222,6 +237,9 @@ class AgentRunner:
             EventType.MODEL_REQUESTED,
             {"request_id": request_id, "message_count": len(request.messages)},
         )
+        # 每次真实 API 请求尝试都在发出前计入模型预算（含失败与重试，specs/02 V0.2）；
+        # M3 Gateway 的内部重试通过同一计数钩子上报。
+        self._budget.count_model_call()
         try:
             return self._model_client.complete(request)
         except ModelClientError:
@@ -229,8 +247,12 @@ class AgentRunner:
 
     # ---- finish / Final Verification ----
 
-    def _handle_finish(self) -> bool:
-        """finish 提交 → VERIFYING → Final Verification。返回 True 表示 Run 可结束。"""
+    def _handle_finish(self) -> str:
+        """finish 提交 → VERIFYING → Final Verification。
+
+        返回 "accepted"（Run 可正常结束）/ "error"（验证环境或组件错误，Run 终止为
+        FAILED）/ "feedback"（断言失败，反馈回流继续修复）。
+        """
         self._transition(RunStatus.VERIFYING)
         report = self._run_verification()
         self._append_event(
@@ -238,18 +260,22 @@ class AgentRunner:
         )
         if report.outcome is VerificationOutcome.PASSED:
             self._verification_status = VerificationStatus.PASSED
-            return True
-        if report.outcome in (VerificationOutcome.INCONCLUSIVE, VerificationOutcome.ERROR):
-            # 无法验证 ≠ 验证失败：保留确定性结果，不重验，不启动 Review（RT-08）
+            return "accepted"
+        if report.outcome is VerificationOutcome.INCONCLUSIVE:
+            # 无可用测试 ≠ 验证失败：不能宣称验证通过，允许正常完成（VF-05）
             self._verification_status = VerificationStatus.INCONCLUSIVE
-            return True
+            return "accepted"
+        if report.outcome is VerificationOutcome.ERROR:
+            # 不可恢复错误：终止任务，不重验，不当作正常完成（design/08 V1.1）
+            self._verification_status = VerificationStatus.INCONCLUSIVE
+            return "error"
         # 断言失败 → 反馈回流继续修复（RT-07）
         self._verification_status = VerificationStatus.FAILED
         self._transition(RunStatus.RUNNING)
         self._context.record_verification_feedback(report)
         self._working_state.failed_tests = list(report.failed_tests)
         self._working_state.updated_at_step = self._step
-        return False
+        return "feedback"
 
     def _run_verification(self) -> VerificationReport:
         request = VerificationRequest(
@@ -374,3 +400,4 @@ class AgentRunner:
             if isinstance(value, int):
                 short = key.removesuffix("_tokens")
                 self._token_usage[short] = self._token_usage.get(short, 0) + value
+        self._budget.record_usage(usage)  # Token 预算检查依据（缺失时预算侧不计）

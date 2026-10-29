@@ -242,3 +242,130 @@ class TestPermissionAndBudget:
         assert outcome.results[1].status is ExecutionStatus.SUCCEEDED
         assert outcome.results[2].status is ExecutionStatus.SKIPPED
         assert outcome.results[2].skipped_reason == "budget_exhausted"
+
+
+class TestRevisionRegressions:
+    """M1 集成评审修订（specs/02 V0.2 / specs/03 V0.3）的回归用例。"""
+
+    def test_rt14_write_validation_failure_propagates(self, registry):
+        """RT-14：写入类调用校验失败 → 后续调用全部 SKIPPED，不执行。"""
+        store = SQLiteEventStore(":memory:")
+        executor = FakeToolExecutor()
+        scheduler, _ = make_scheduler(registry, executor, store)
+        calls = [
+            make_tool_call("c1", "apply_patch", path="a.py"),  # 缺必填 patch
+            make_tool_call("c2", "read_file", path="a.py"),
+        ]
+        outcome = scheduler.execute_batch(calls, AgentActor.MAIN, step=1, decision_id="d1", ts=1.0)
+        assert outcome.results[0].status is ExecutionStatus.FAILED
+        assert outcome.results[0].error_code is ToolErrorCode.INVALID_ARGUMENT
+        assert outcome.results[1].status is ExecutionStatus.SKIPPED
+        assert outcome.results[1].skipped_reason == "batch_aborted_after_write_failure"
+        assert executor.executed() == []
+
+    def test_readonly_validation_failure_skips_subsequent_write(self, registry):
+        """只读类校验失败 → 后续写入类 SKIPPED、只读可继续（传播按副作用类别判定）。"""
+        store = SQLiteEventStore(":memory:")
+        executor = FakeToolExecutor()
+        scheduler, _ = make_scheduler(registry, executor, store)
+        calls = [
+            make_tool_call("c1", "read_file"),  # 缺必填 path
+            make_tool_call("c2", "list_files", path="."),
+            make_tool_call("c3", "apply_patch", path="a.py", patch="x"),
+        ]
+        outcome = scheduler.execute_batch(calls, AgentActor.MAIN, step=1, decision_id="d1", ts=1.0)
+        assert outcome.results[0].error_code is ToolErrorCode.INVALID_ARGUMENT
+        assert outcome.results[1].status is ExecutionStatus.SUCCEEDED  # 只读继续
+        assert outcome.results[2].status is ExecutionStatus.SKIPPED
+        assert outcome.results[2].skipped_reason == "batch_aborted_after_read_failure"
+        assert executor.executed() == ["list_files"]
+
+    def test_tl14_permission_denied_before_schema(self, registry):
+        """TL-14：权限校验先于 Schema——无权限 actor 的畸形参数返回 PERMISSION_DENIED。"""
+        from repofix.contracts import ToolCall
+
+        dispatcher = ToolDispatcher(registry, FakeToolExecutor())
+        malformed = ToolCall(call_id="c1", tool_name="apply_patch", arguments={"nonsense": True})
+        error = dispatcher.validate(malformed, AgentActor.REVIEWER)
+        assert error is not None
+        assert error.error_code is ToolErrorCode.PERMISSION_DENIED
+
+    def test_st05_executor_crash_persists_unknown(self, registry):
+        """ST-05：执行器异常 → side_effect_status=UNKNOWN，剩余调用不执行。"""
+        store = SQLiteEventStore(":memory:")
+        executor = FakeToolExecutor()
+        executor.register_error("apply_patch", RuntimeError("boom after write"))
+        scheduler, _ = make_scheduler(registry, executor, store)
+        calls = [
+            make_tool_call("c1", "apply_patch", path="a.py", patch="x"),
+            make_tool_call("c2", "read_file", path="b.py"),
+        ]
+        outcome = scheduler.execute_batch(calls, AgentActor.MAIN, step=1, decision_id="d1", ts=1.0)
+        assert outcome.side_effect_unknown is True
+        row = store.get_tool_call(RUN_ID, "d1", "c1")
+        assert row["side_effect_status"] == SideEffectStatus.UNKNOWN.value
+        assert outcome.results[1].status is ExecutionStatus.SKIPPED
+        assert outcome.results[1].skipped_reason == "run_terminated_after_unknown_side_effect"
+        assert executor.executed() == ["apply_patch"]
+
+    def test_request_budget_counts_rejected_and_skipped_calls(self, registry):
+        """RT-10（V0.2）：工具请求预算计入被拒/跳过的调用；实际执行另计。"""
+        store = SQLiteEventStore(":memory:")
+        executor = FakeToolExecutor()
+        config = RunConfig(model_id="m", max_tool_calls=2)
+        scheduler, budget = make_scheduler(registry, executor, store, config)
+        calls = [
+            make_tool_call("c1", "read_file"),  # 校验拒绝（请求 1）
+            make_tool_call("c2", "read_file", path="a.py"),  # 执行（请求 2）
+            make_tool_call("c3", "read_file", path="b.py"),  # 预算跳过（请求 3）
+        ]
+        outcome = scheduler.execute_batch(calls, AgentActor.MAIN, step=1, decision_id="d1", ts=1.0)
+        assert outcome.budget_exhausted is True
+        assert outcome.results[0].error_code is ToolErrorCode.INVALID_ARGUMENT
+        assert outcome.results[1].status is ExecutionStatus.SUCCEEDED
+        assert outcome.results[2].skipped_reason == "budget_exhausted"
+        assert budget.tool_calls == 3  # 请求口径：含被拒与跳过
+        assert budget.tool_executions == 1  # 实际执行口径
+
+    def test_mixed_reject_counts_non_control_requests(self, registry):
+        """混合拒绝批次的非控制调用也计入请求预算（防绕过）。"""
+        store = SQLiteEventStore(":memory:")
+        executor = FakeToolExecutor()
+        scheduler, budget = make_scheduler(registry, executor, store)
+        scheduler.execute_batch(
+            [
+                make_tool_call("c1", "read_file", path="a.py"),
+                make_tool_call("f1", "finish", summary="done"),
+            ],
+            AgentActor.MAIN,
+            step=1,
+            decision_id="d1",
+            ts=1.0,
+        )
+        assert budget.tool_calls == 1  # finish 是控制动作，不计入
+        assert budget.tool_executions == 0
+
+
+class TestByteTruncation:
+    def test_truncation_limit_is_utf8_bytes_and_marker_fits(self):
+        """TL-12（V0.2）：32 KiB 按 UTF-8 字节计，含截断标记后总输出不越界。"""
+        from repofix.tools.dispatcher import truncate_content
+
+        # 多字节字符：100 个"汉"= 300 UTF-8 字节，远超 64 字节上限
+        content = "汉" * 100
+        truncated, flag = truncate_content(content, limit_bytes=64)
+        assert flag is True
+        assert len(truncated.encode("utf-8")) <= 64
+        assert "[truncated]" in truncated
+        # 不超限的内容原样返回
+        same, flag = truncate_content("hello", limit_bytes=64)
+        assert same == "hello" and flag is False
+
+    def test_dispatcher_default_limit_is_32kib(self, registry):
+        from repofix.tools.dispatcher import DEFAULT_CONTENT_LIMIT_BYTES, ToolDispatcher
+
+        assert DEFAULT_CONTENT_LIMIT_BYTES == 32 * 1024
+        dispatcher = ToolDispatcher(registry, FakeToolExecutor())
+        call = make_tool_call("c1", "read_file", path="big.py")
+        result = dispatcher.execute(call)
+        assert result.truncated is False  # Fake 短输出不受影响

@@ -1,6 +1,7 @@
 """Tool System：静态注册表 + 严格 Schema + 单 Dispatcher + 结构化 ToolResult。"""
 from repofix.tools.dispatcher import (
-    DEFAULT_CONTENT_LIMIT_CHARS,
+    DEFAULT_CONTENT_LIMIT_BYTES,
+    ExecutorCrashError,
     ToolDispatcher,
     ToolExecutor,
     truncate_content,
@@ -13,7 +14,8 @@ from repofix.tools.registry import (
 )
 
 __all__ = [
-    "DEFAULT_CONTENT_LIMIT_CHARS",
+    "DEFAULT_CONTENT_LIMIT_BYTES",
+    "ExecutorCrashError",
     "ToolDispatcher",
     "ToolExecutor",
     "ToolRegistry",
