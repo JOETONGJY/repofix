@@ -21,6 +21,14 @@ class ModelTransientError(ModelClientError):
     """可重试：429 / 5xx / 超时 / 连接错误（指数退避，受 model_retry_limit 约束）。"""
 
 
+class ModelProtocolError(ModelClientError):
+    """响应结构损坏 / 不完整 / call_id 丢失或重复 / 输出被截断。
+
+    完整响应接纳之后才能执行工具（design/03 硬约束）；此类错误由 Runtime
+    做有限协议纠正（重发一次），不得根据部分内容提前执行。
+    """
+
+
 class ModelClient(Protocol):
     """Runtime → Gateway 的唯一模型入口。实现方负责协议转换与响应标准化。"""
 

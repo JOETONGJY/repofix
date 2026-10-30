@@ -57,10 +57,17 @@ class ContextBuilder:
         return [dict(message) for message in self._messages]
 
     def record_response(self, response: ModelResponse) -> None:
-        """记录 assistant 消息：文本 + 本轮全部 tool_calls（按模型协议结构保留）。"""
+        """记录 assistant 消息：文本 + 本轮全部 tool_calls（按模型协议结构保留）。
+
+        供应商续接字段（如 DeepSeek thinking mode 的 reasoning_content）必须原样
+        保留在 assistant 消息中，下一轮请求按原生协议带回（GW-05，design/03 硬约束）。
+        """
         entry: dict = {"role": "assistant"}
         if response.message and response.message.get("content"):
             entry["content"] = response.message["content"]
+        reasoning = response.provider_metadata.get("reasoning_content")
+        if reasoning:
+            entry["reasoning_content"] = reasoning
         if response.tool_calls:
             entry["tool_calls"] = [
                 {

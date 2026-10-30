@@ -26,7 +26,7 @@ from repofix.contracts import (
     VerificationStatus,
     WorkingState,
 )
-from repofix.gateway.client import ModelClient, ModelClientError
+from repofix.gateway.client import ModelClient, ModelClientError, ModelProtocolError
 from repofix.runtime.loop_guard import (
     BudgetTracker,
     BudgetViolation,
@@ -124,7 +124,24 @@ class AgentRunner:
                     RunStatus.BUDGET_EXCEEDED, f"budget_exhausted:{violation.reason}"
                 )
 
-            response = self._request_model()
+            try:
+                response = self._request_model()
+            except ModelProtocolError as exc:
+                # Gateway 层协议错误（截断 / call_id 丢失或重复 / 结构损坏）：
+                # 完整响应接纳之前不执行任何工具，按有限协议纠正重发一次（RT-01/13 同策略）
+                if not protocol_retry_used:
+                    protocol_retry_used = True
+                    self._append_event(
+                        EventType.MODEL_RETRY,
+                        {"reason": "gateway_protocol_error", "detail": str(exc)[:200], "step": self._step},
+                    )
+                    self._context.record_protocol_error(f"invalid model response: {exc}")
+                    continue
+                return self._finish(
+                    RunStatus.FAILED,
+                    f"model_protocol_error:{str(exc)[:100]}",
+                    fail_layer=FailureLayer.MODEL_API,
+                )
             if response is None:
                 return self._finish(
                     RunStatus.FAILED,
@@ -237,11 +254,15 @@ class AgentRunner:
             EventType.MODEL_REQUESTED,
             {"request_id": request_id, "message_count": len(request.messages)},
         )
-        # 每次真实 API 请求尝试都在发出前计入模型预算（含失败与重试，specs/02 V0.2）；
-        # M3 Gateway 的内部重试通过同一计数钩子上报。
-        self._budget.count_model_call()
+        # 每次真实 API 请求尝试都计入模型预算（含失败与重试，specs/02 V0.2）。
+        # 自行管理尝试计数的 Gateway（ProviderAdapter 经 on_attempt 钩子统计每次尝试）
+        # 由其自身计数，Runner 不预计数以免双重统计。
+        if not getattr(self._model_client, "counts_own_attempts", False):
+            self._budget.count_model_call()
         try:
             return self._model_client.complete(request)
+        except ModelProtocolError:
+            raise  # 协议错误交由主循环做有限纠正（不能被通用 ModelClientError 吞掉）
         except ModelClientError:
             return None
 
