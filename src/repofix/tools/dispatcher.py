@@ -31,9 +31,19 @@ _TRUNCATION_MARKER = "\n...[truncated]...\n"
 
 
 class ToolExecutor(Protocol):
-    """Workspace 执行能力抽象。M1 测试用 Fake；M2 替换为 DockerWorkspace 实现。"""
+    """Workspace 执行能力抽象。M1 测试用 Fake；M2 替换为 DockerWorkspace 实现。
 
-    def execute(self, tool_name: str, arguments: dict) -> ToolResult: ...
+    call_id 由 Scheduler 传入：实现方据此保存受限大小的全量输出产物
+    （specs/01：stdout / stderr 全文存 SQLite，不进模型上下文）。
+    """
+
+    def execute(self, tool_name: str, arguments: dict, call_id: str = "") -> ToolResult: ...
+
+
+class FullOutputSource(Protocol):
+    """可选能力：按 call_id 取回工具全量输出（stdout, stderr），供持久化。"""
+
+    def pop_full_output(self, call_id: str) -> tuple[str, str] | None: ...
 
 
 class ExecutorCrashError(RuntimeError):
@@ -126,7 +136,7 @@ class ToolDispatcher:
             )
         started = time.perf_counter()
         try:
-            result = self._executor.execute(tool_name=call.tool_name, arguments=call.arguments)
+            result = self._executor.execute(tool_name=call.tool_name, arguments=call.arguments, call_id=call.call_id)
         except Exception as exc:  # noqa: BLE001 —— 异常必须上抛为副作用未知，不能伪装成确定失败
             raise ExecutorCrashError(call.tool_name, exc) from exc
         result.call_id = call.call_id  # 执行器不感知 call_id，由 Dispatcher 统一绑定
@@ -135,3 +145,10 @@ class ToolDispatcher:
         result.truncated = truncated or result.truncated
         result.duration_ms = result.duration_ms or int((time.perf_counter() - started) * 1000)
         return result
+
+    def drain_full_output(self, call_id: str) -> tuple[str, str] | None:
+        """委托给执行器的可选全量输出源（stdout / stderr 全文，供 SQLite 持久化）。"""
+        source = getattr(self._executor, "pop_full_output", None)
+        if callable(source):
+            return source(call_id)
+        return None

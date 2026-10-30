@@ -1,9 +1,10 @@
-"""测试辅助：ScriptedModelClient / FakeToolExecutor / FakeVerifier / 可控时钟。
+"""测试辅助：ScriptedModelClient / FakeToolExecutor / FakeVerifier / 可控时钟 / Fake DockerCli。
 
 两条 Fake 纪律（plan.md）：与真实组件同接口契约；仅放测试辅助代码，不建生产级 Mock 框架。
 Fake 不生成 Trace / RunResult——这些必须由真实 Runtime 产生。
 """
 import json
+import subprocess
 
 import pytest
 
@@ -18,6 +19,78 @@ from repofix.contracts import (
     VerificationRequest,
 )
 from repofix.tools.registry import ToolRegistry, register_default_tools
+from repofix.workspace.docker_cli import CliResult
+
+
+class FakeDockerCli:
+    """DockerCli 同接口 Fake：容器操作只记录，exec 返回预设结果。"""
+
+    def __init__(self, exec_results: list[CliResult] | None = None):
+        self.started: list[tuple[str, str]] = []
+        self.stopped: list[str] = []
+        self.removed: list[str] = []
+        self.exec_calls: list[tuple[str, list[str], str]] = []
+        self._exec_results = list(exec_results or [])
+
+    def version(self) -> str:
+        return "fake"
+
+    def image_exists(self, image: str) -> bool:
+        return True
+
+    def container_exists(self, name: str) -> bool:
+        return False
+
+    def start_container(self, name: str, image: str, task_dir, **kwargs) -> None:
+        self.started.append((name, image))
+
+    def exec(self, name: str, argv: list[str], timeout: int = 120, cwd_in_container: str = "/workspace") -> CliResult:
+        self.exec_calls.append((name, argv, cwd_in_container))
+        if self._exec_results:
+            return self._exec_results.pop(0)
+        return CliResult(0, "", "")
+
+    def stop_container(self, name: str, timeout: int = 60) -> None:
+        self.stopped.append(name)
+
+    def remove_container(self, name: str, timeout: int = 60) -> None:
+        self.removed.append(name)
+
+
+def run_git(args: list[str], cwd) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=True,
+    )
+    return proc.stdout
+
+
+@pytest.fixture
+def sample_repo(tmp_path):
+    """小型真实 Git 仓库：auth.py + pytest 测试 + .gitignore（WS/TL 测试共用）。"""
+    repo = tmp_path / "sample-repo"
+    repo.mkdir()
+    run_git(["init", "-q", "-b", "main"], repo)
+    run_git(["config", "user.email", "repofix@test.local"], repo)
+    run_git(["config", "user.name", "repofix-test"], repo)
+    run_git(["config", "core.autocrlf", "false"], repo)
+    (repo / "auth.py").write_text(
+        "def validate_password(pw: str) -> bool:\n"
+        "    return len(pw) >= 0\n",
+        encoding="utf-8",
+    )
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_auth.py").write_text(
+        "from auth import validate_password\n\n"
+        "def test_empty_password_rejected():\n"
+        "    assert validate_password('') is False\n",
+        encoding="utf-8",
+    )
+    (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n", encoding="utf-8")
+    run_git(["add", "-A"], repo)
+    run_git(["commit", "-q", "-m", "init"], repo)
+    return repo
 
 
 class FakeClock:
@@ -71,7 +144,7 @@ class FakeToolExecutor:
     def register_error(self, tool_name: str, exc: Exception) -> None:
         self._errors[tool_name] = exc
 
-    def execute(self, tool_name: str, arguments: dict) -> ToolResult:
+    def execute(self, tool_name: str, arguments: dict, call_id: str = "") -> ToolResult:
         self.calls.append((tool_name, arguments))
         for observer in self.observers:
             observer(tool_name, arguments)
@@ -140,3 +213,19 @@ def registry() -> ToolRegistry:
 @pytest.fixture
 def config() -> RunConfig:
     return RunConfig(model_id="scripted-model", review_enabled=False)
+
+
+@pytest.fixture
+def task_workspace(sample_repo, tmp_path):
+    """真实 WorkspaceManager 准备的干净任务副本 + 注入 Fake DockerCli 的 DockerWorkspace。"""
+    from repofix.workspace.docker_workspace import DockerWorkspace
+    from repofix.workspace.manager import WorkspaceManager
+
+    handle = WorkspaceManager(tmp_path / "workspaces").prepare(
+        "run_ws_test", sample_repo, "HEAD"
+    )
+    cli = FakeDockerCli()
+    ws = DockerWorkspace(handle.task_dir, handle.run_id, cli=cli)
+    ws.handle = handle
+    ws.fake_cli = cli
+    return ws

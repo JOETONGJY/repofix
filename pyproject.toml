@@ -27,6 +27,9 @@ repofix = ["prompts/**/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: requires Docker Desktop running (deselect with -m 'not integration')",
+]
 
 [tool.ruff]
 line-length = 120

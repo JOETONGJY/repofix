@@ -173,6 +173,7 @@ class ToolBatchScheduler:
             if result.status is ExecutionStatus.SUCCEEDED
             else SideEffectStatus.FAILED
         )
+        stdout, stderr = self._drain_full_output(call.call_id)
         self._store.finish_tool_call(
             run_id=self._run_id,
             decision_id=decision_id,
@@ -181,8 +182,17 @@ class ToolBatchScheduler:
             side_effect_status=side_effect_status,
             result=result,
             ts=ts,
+            stdout=stdout,
+            stderr=stderr,
         )
         return result, False
+
+    def _drain_full_output(self, call_id: str) -> tuple[str, str]:
+        """取回执行器保存的全量输出（specs/01：stdout/stderr 全文存 SQLite）。"""
+        drain = getattr(self._dispatcher, "drain_full_output", None)
+        if callable(drain):
+            return drain(call_id) or ("", "")
+        return "", ""
 
     def _record_skipped(
         self, call: ToolCall, step: int, decision_id: str, reason: str, ts: float
