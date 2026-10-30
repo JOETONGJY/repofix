@@ -1,13 +1,13 @@
 # RepoFix 实现规格 03：工具与工作区（Tools & Workspace）
 
-> 版本：V0.3（M1 集成评审修订：① 校验顺序权限优先；② 输出截断双层限制——Dispatcher 32 KiB UTF-8 字节硬上限 + Context 层 2000 字符软预算）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[../design/04-tool-system.md](../design/04-tool-system.md)。
+> 版本：V0.4（M1 修订见 V0.3 记录；M2 评审修订：工具计数统一为五个工作区工具 + 两个控制动作）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[../design/04-tool-system.md](../design/04-tool-system.md)。
 > 依赖：[01-contracts.md](01-contracts.md)。
 
 ---
 
 ## 工具注册与通用约定
 
-- 工具注册表：六个工作区工具 + `finish` / `submit_review` 两个 Runtime 控制动作。名称、参数 Schema、副作用类别固定如下，**不得增删改**。
+- 工具注册表：**五个**工作区工具（list_files / search_code / read_file / apply_patch / run_command）+ `finish` / `submit_review` 两个 Runtime 控制动作。名称、参数 Schema、副作用类别固定如下，**不得增删改**。
 - **静态注册**：工具在程序启动时注册；不支持模型运行中安装、发现或注册新工具；不支持 MCP。
 - **权限按 actor 区分**：Main 与 Reviewer 复用同一 Registry，按角色生成不同工具视图——Reviewer 视图中不存在 `apply_patch / run_command / finish`。只读约束由注册表 + Workspace 权限共同保证，**不能仅写在 System Prompt 中**。Agent 角色由 Runtime 设置，不能来自模型参数。
 - 副作用类别决定调度行为（见 02）：`read_only` 失败后同类可继续；`write` / `process` 失败即中止批次。

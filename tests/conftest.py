@@ -225,7 +225,7 @@ def task_workspace(sample_repo, tmp_path):
         "run_ws_test", sample_repo, "HEAD"
     )
     cli = FakeDockerCli()
-    ws = DockerWorkspace(handle.task_dir, handle.run_id, cli=cli)
+    ws = DockerWorkspace(handle.task_dir, handle.run_id, base_commit=handle.base_commit, cli=cli)
     ws.handle = handle
     ws.fake_cli = cli
     return ws

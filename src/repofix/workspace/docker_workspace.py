@@ -58,7 +58,8 @@ def build_rg_argv(pattern: str, path: str, regex: bool, glob: str | None, limit:
         argv.append("--fixed-strings")
     if glob:
         argv += ["--glob", glob]
-    argv += ["--max-filesize", "2M", pattern, path]
+    # "--" 结束选项解析：以 - 开头的搜索词不会被误当作 rg 选项
+    argv += ["--max-filesize", "2M", "--", pattern, path]
     return argv
 
 
@@ -89,6 +90,7 @@ class DockerWorkspace:
         task_dir: Path,
         run_id: str,
         *,
+        base_commit: str | None = None,
         cli: DockerCli | None = None,
         container_name: str | None = None,
         read_only: bool = False,
@@ -96,6 +98,8 @@ class DockerWorkspace:
     ):
         self.task_dir = Path(task_dir)
         self.run_id = run_id
+        # 不可变 Diff 基线（CONS-03）：副本以 detached HEAD 停在该快照
+        self.base_commit = base_commit
         self._cli = cli or DockerCli()
         self.container_name = container_name or f"repofix-{run_id}"
         self.read_only = read_only
@@ -146,7 +150,7 @@ class DockerWorkspace:
         """Scheduler 在持久化后取走全量输出（stdout, stderr）。"""
         return self._full_outputs.pop(call_id, None)
 
-    # ---- 六个工作区工具 ----
+    # ---- 五个工作区工具 ----
 
     def list_files(self, path: str = ".", max_depth: int = 3, limit: int = 100) -> ToolResult:
         try:
@@ -157,21 +161,22 @@ class DockerWorkspace:
         if not root.is_dir():
             return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
                               error_code=ToolErrorCode.EXECUTION_ERROR, error_message=f"not a directory: {path}")
-        base_rel = root.relative_to(self.task_dir.resolve())
+        # 严格限定在目标目录内遍历（path="src" 不得返回其他目录的文件）
+        task_root = self.task_dir.resolve()
         files: list[str] = []
         truncated = False
-        base_depth = len(base_rel.parts)
-        for item in sorted(self.task_dir.rglob("*")):
-            rel = item.relative_to(self.task_dir.resolve())
+        for item in sorted(root.rglob("*")):
+            rel = item.relative_to(root)
             if ".git" in rel.parts:
                 continue
-            if len(rel.parts) - base_depth > max_depth:
+            if len(rel.parts) > max_depth:
                 continue
             if item.is_file():
                 if len(files) >= limit:
                     truncated = True
                     break
-                files.append(rel.as_posix())
+                # 输出保持相对任务副本根
+                files.append(item.relative_to(task_root).as_posix())
         content = "\n".join(files) if files else "(no files)"
         content += f"\n[{len(files)} files" + (", truncated]" if truncated else "]")
         return ToolResult(call_id="pending", status=ExecutionStatus.SUCCEEDED, content=content, truncated=truncated)
@@ -247,17 +252,24 @@ class DockerWorkspace:
         )
 
     def apply_patch(self, path: str, patch: str, expected_sha256: str | None = None) -> ToolResult:
+        if self.read_only:
+            # Workspace 层真实只读防护（M4 Reviewer；不依赖 Tool Registry 单层拒绝）
+            return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
+                              error_code=ToolErrorCode.PERMISSION_DENIED,
+                              error_message="read-only workspace cannot modify files")
         try:
             target = safe_resolve(self.task_dir, path)
         except PathEscapeError as exc:
             return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
                               error_code=ToolErrorCode.INVALID_ARGUMENT, error_message=str(exc))
+        # 单文件约束（specs/03 D4-01）：整个 Diff 必须恰好修改这一个文件——
+        # 解析完整 Patch，拒绝额外文件、重命名、删除与 Git 元数据变更
+        patch_error = _validate_single_file_patch(patch, path)
+        if patch_error:
+            return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
+                              error_code=ToolErrorCode.INVALID_ARGUMENT, error_message=patch_error)
         exists = target.exists()
         new_intent = "--- /dev/null" in patch
-        mismatch = _patch_target_mismatch(patch, path)
-        if mismatch:
-            return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
-                              error_code=ToolErrorCode.INVALID_ARGUMENT, error_message=mismatch)
         if new_intent:
             # 新建语义：显式"文件不存在"前置条件；目标已存在 → CONFLICT，不能覆盖
             if exists:
@@ -341,15 +353,15 @@ class DockerWorkspace:
     # ---- Patch 导出与版本标识（CONS-03）----
 
     def get_changes(self) -> dict:
-        """相对 base_commit 的完整变化：含 run_command 产生的修改与未跟踪新文件；
+        """相对不可变 base_commit 的完整变化：含 run_command 产生的修改与未跟踪新文件；
         排除被 Git 忽略的内容。"""
+        base = self._diff_base_commit()
         _git(["add", "--intent-to-add", "--all", "."], cwd=self.task_dir)
-        base = self._base_commit_for_diff()
         try:
             diff = _git(["diff", base], cwd=self.task_dir).stdout
             names = _git(["diff", "--name-only", base], cwd=self.task_dir).stdout
         finally:
-            _git(["reset", "--quiet"], cwd=self.task_dir)
+            _git(["reset", "--quiet"], cwd=self.task_dir, check=False)
         return {
             "diff": diff,
             "changed_files": [line for line in names.splitlines() if line.strip()],
@@ -369,26 +381,39 @@ class DockerWorkspace:
             fh.write(diff)
         return str(out_path)
 
-    def _base_commit_for_diff(self) -> str:
-        head = _git(["rev-parse", "HEAD"], cwd=self.task_dir).stdout.strip()
-        return head  # 副本 HEAD 恒为 base_commit（detached；不跟随原仓库）
+    def _diff_base_commit(self) -> str:
+        """Diff 基线恒为构造时固定的 base_commit；HEAD 漂移视为严重异常（副本被意外改写）。"""
+        if self.base_commit:
+            head = _git(["rev-parse", "HEAD"], cwd=self.task_dir).stdout.strip()
+            if head != self.base_commit:
+                raise WorkspaceError(
+                    f"workspace HEAD drifted from base_commit: HEAD={head[:12]} base={self.base_commit[:12]}"
+                )
+            return self.base_commit
+        return _git(["rev-parse", "HEAD"], cwd=self.task_dir).stdout.strip()
 
     # ---- 内部 ----
 
     def _run_in_container(self, argv: list[str], cwd_in_container: str, timeout: int):
-        """容器内执行 argv。超时 → 终止容器（进程树）→ 副作用未知。"""
+        """容器内执行 argv。超时 → 终止容器（进程树）并确认停止 → 副作用仍为未知。"""
         try:
             return self._cli.exec(self.container_name, argv, timeout=timeout, cwd_in_container=cwd_in_container)
         except DockerCliError as exc:
             if "timed out" in str(exc) and self._container_up:
-                # specs/03：超时必须终止实际进程树——docker stop 终止全部容器进程
+                # specs/03：超时必须终止实际进程树——docker stop + 状态确认 + 必要时强制移除。
+                # 无论停止是否确认成功，副作用都不能据此推断为"未发生"。
+                cleanup_note = "process tree terminated (container stopped, verified)"
                 try:
-                    self._cli.stop_container(self.container_name)
-                except DockerCliError:
-                    pass
+                    self._cli.ensure_container_stopped(self.container_name)
+                except DockerCliError as cleanup_exc:
+                    cleanup_note = (
+                        "CONTAINER CLEANUP UNVERIFIED: "
+                        f"container={self.container_name} may still be running ({cleanup_exc})"
+                    )
                 self._container_up = False
                 raise ExecutorCrashError("run_command", TimeoutError(
-                    f"command timed out after {timeout}s; process tree terminated; side effects unverified"
+                    f"command timed out after {timeout}s; {cleanup_note}; "
+                    "side effects remain UNKNOWN"
                 )) from exc
             raise
 
@@ -404,6 +429,12 @@ def compute_patch_hash(diff_text: str) -> str:
     return hashlib.sha256(diff_text.encode("utf-8")).hexdigest()
 
 
+def _strip_diff_prefix(p: str) -> str:
+    if p.startswith("a/") or p.startswith("b/"):
+        return p[2:]
+    return p
+
+
 def _patch_targets(patch: str) -> list[str]:
     """提取 unified diff 的目标路径（去除 a/ b/ 前缀；忽略 /dev/null）。"""
     targets: list[str] = []
@@ -412,16 +443,50 @@ def _patch_targets(patch: str) -> list[str]:
             p = line[4:].strip().split("\t")[0]
             if p == "/dev/null":
                 continue
-            if p.startswith("a/") or p.startswith("b/"):
-                p = p[2:]
-            targets.append(p)
+            targets.append(_strip_diff_prefix(p))
     return targets
 
 
-def _patch_target_mismatch(patch: str, path: str) -> str | None:
-    targets = _patch_targets(patch)
-    if path not in targets:
-        return f"patch targets {sorted(set(targets))}, arguments say {path}"
+def _validate_single_file_patch(patch: str, path: str) -> str | None:
+    """校验整个 Unified Diff 恰好只修改 path 这一个文件（specs/03 D4-01）。
+
+    兼容两种格式：完整 git diff（含 diff --git 头）与裸 unified diff（仅 ---/+++）。
+    拒绝：多文件变更、重命名、删除、Git 元数据（mode/similarity）变更、二进制 Patch。
+    返回 None 表示通过；否则返回错误描述。
+    """
+    lines = patch.splitlines()
+    diff_git_lines = [line for line in lines if line.startswith("diff --git ")]
+    if len(diff_git_lines) > 1:
+        return f"patch contains {len(diff_git_lines)} file changes; apply_patch accepts exactly one file"
+    if diff_git_lines:
+        header = diff_git_lines[0]
+        parts = header.split(" ")
+        if len(parts) < 4:
+            return f"malformed diff header: {header[:80]}"
+        src, dst = _strip_diff_prefix(parts[2]), _strip_diff_prefix(parts[3])
+        if src != dst:
+            return "patch renames or moves a file, which is not supported"
+        if src != path:
+            return f"patch targets '{src}', arguments say '{path}'"
+        body_checks = (
+            ("similarity index", "file rename detected, which is not supported"),
+            ("rename from", "file rename detected, which is not supported"),
+            ("rename to", "file rename detected, which is not supported"),
+            ("deleted file mode", "file deletion detected, which is not supported"),
+            ("old mode", "git metadata (mode) changes are not supported"),
+            ("GIT binary patch", "binary patches are not supported"),
+        )
+        for marker, reason in body_checks:
+            if any(marker in line for line in lines):
+                return reason
+    # ---/+++ 目标解析（/dev/null 跳过）：全部目标必须恰为指定文件
+    header_targets = _patch_targets(patch)
+    if not header_targets:
+        return "patch does not contain any file target"
+    if set(header_targets) != {path}:
+        return f"patch modifies {sorted(set(header_targets))}; exactly '{path}' is required"
+    if "+++ /dev/null" in patch:
+        return "file deletion detected, which is not supported"
     return None
 
 
@@ -434,13 +499,17 @@ def _fit_command_output(text: str, limit: int = 16 * 1024) -> tuple[str, bool]:
     return head + "\n...[truncated]...\n" + tail, True
 
 
-def _git(args: list[str], cwd: Path) -> "subprocess.CompletedProcess[str]":
-    import subprocess
-
-    return subprocess.run(
+def _git(args: list[str], cwd: Path, check: bool = True) -> "subprocess.CompletedProcess[str]":
+    proc = subprocess.run(
         ["git", *args], cwd=str(cwd), capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=120,
     )
+    if check and proc.returncode != 0:
+        # Git 失败不能把空 stdout 当作有效结果继续（评审 P1：get_changes 退出码检查）
+        raise WorkspaceError(
+            f"git {' '.join(args[:2])} failed rc={proc.returncode}: {(proc.stderr or proc.stdout).strip()[:300]}"
+        )
+    return proc
 
 
 def _git_apply(task_dir: Path, patch: str) -> "subprocess.CompletedProcess[str]":

@@ -1,6 +1,6 @@
 # RepoFix 实现规格 02：Runtime 语义（Runtime Semantics）
 
-> 版本：V0.2（M1 集成评审修订：① 校验顺序改为权限优先；② VerificationOutcome.ERROR 为不可恢复错误 → Run FAILED；③ 工具预算计数对象 = 工具请求；④ 模型预算按真实 API 请求尝试计数；⑤ 清理 finish 旧契约残留）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)。
+> 版本：V0.3（M1 集成评审修订见 V0.2 记录；M2 评审修订：Finish 协议中环境错误/超时 → FAILED 的旧表述清理，与状态转换表一致）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)。
 > 依赖：[01-contracts.md](01-contracts.md) 的全部枚举与模型。工具定义见 [03-tools-and-workspace.md](03-tools-and-workspace.md)。
 
 ---
@@ -66,7 +66,8 @@
   - 通过且 `review_enabled=False` → `COMPLETED`（单 Agent Baseline 路径）。
   - 通过且 `review_enabled=True` → `REVIEWING`，交 Read-only Review Agent（触发条件与执行规则见下节）。
   - `ASSERTION_FAILURE` → 报告反馈给模型，回 RUNNING 继续修复（受预算约束）。
-  - `ENVIRONMENT_ERROR` / `EXECUTION_TIMEOUT` / `UNDETERMINABLE` → 终止为 `COMPLETED` + 附报告（Evaluation 记 INCONCLUSIVE），**不启动 Review，不再重验**。
+  - 环境错误（`ENVIRONMENT_ERROR`）/ 执行超时（`EXECUTION_TIMEOUT`）→ **终止为 `FAILED`**（fail_layer=WORKSPACE，V0.2 修订：不可恢复错误，不当作正常完成），**不启动 Review，不再重验**。
+  - `UNDETERMINABLE`（无可用测试）→ `COMPLETED` + 附报告（Evaluation 记 INCONCLUSIVE，不能宣称验证通过），不启动 Review，不再重验。
 - 模型反复提交 finish 允许，但每次都消耗预算与 Turn 计数，LoopGuard 正常生效。
 
 ## 停止条件（LoopGuard）

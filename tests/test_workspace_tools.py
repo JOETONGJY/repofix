@@ -258,3 +258,153 @@ class TestPathSafety:
             pytest.skip("symlink requires privilege on this host")
         with pytest.raises(Exception):
             safe_resolve(task_workspace.task_dir, "evil/secret.txt")
+
+
+class TestSingleFilePatchConstraint:
+    """评审 P0-1：整个 Diff 必须恰好只修改指定文件。"""
+
+    def _dual_file_patch(self) -> str:
+        return (
+            "diff --git a/auth.py b/auth.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/auth.py\n"
+            "+++ b/auth.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def validate_password(pw: str) -> bool:\n"
+            "-    return len(pw) >= 0\n"
+            "+    return len(pw) >= 8\n"
+            "diff --git b/hidden.py b/hidden.py\n"
+            "index 0000000..3333333 100644\n"
+            "--- /dev/null\n"
+            "+++ b/hidden.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+secret = True\n"
+        )
+
+    def test_extra_hidden_file_rejected_and_nothing_changes(self, task_workspace):
+        """合法目标文件 + 额外隐藏文件：拒绝，且两个文件均未变化。"""
+        ws = task_workspace
+        current_hash = read_hash(ws, "auth.py")
+        result = ws.apply_patch(
+            "auth.py", self._dual_file_patch(), expected_sha256=current_hash
+        )
+        assert result.status is ExecutionStatus.FAILED
+        assert result.error_code is ToolErrorCode.INVALID_ARGUMENT
+        assert "exactly one" in result.error_message or "modifies" in result.error_message
+        # 关键断言：两个文件都未被修改
+        assert read_hash(ws, "auth.py") == current_hash
+        assert not (ws.task_dir / "hidden.py").exists()
+
+    def test_rename_rejected(self, task_workspace):
+        rename_patch = (
+            "diff --git a/auth.py b/renamed.py\n"
+            "similarity index 100%\n"
+            "rename from auth.py\n"
+            "rename to renamed.py\n"
+        )
+        result = task_workspace.apply_patch("renamed.py", rename_patch)
+        assert result.error_code is ToolErrorCode.INVALID_ARGUMENT
+        assert "rename" in result.error_message
+
+    def test_delete_rejected(self, task_workspace):
+        delete_patch = (
+            "diff --git a/auth.py b/auth.py\n"
+            "deleted file mode 100644\n"
+            "index 1111111..0000000\n"
+            "--- a/auth.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n"
+            "-gone\n"
+        )
+        current = read_hash(task_workspace, "auth.py")
+        result = task_workspace.apply_patch("auth.py", delete_patch, expected_sha256=current)
+        assert result.error_code is ToolErrorCode.INVALID_ARGUMENT
+        assert "deletion" in result.error_message
+        assert (task_workspace.task_dir / "auth.py").exists()
+
+    def test_path_argument_must_match_header(self, task_workspace):
+        patch = (
+            "diff --git a/auth.py b/auth.py\n"
+            "--- a/auth.py\n"
+            "+++ b/auth.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def validate_password(pw: str) -> bool:\n"
+            "-    return len(pw) >= 0\n"
+            "+    return len(pw) >= 8\n"
+        )
+        result = task_workspace.apply_patch("other.py", patch)
+        assert result.error_code is ToolErrorCode.INVALID_ARGUMENT
+        assert "targets 'auth.py'" in result.error_message
+
+    def test_read_only_workspace_rejects_patch(self, sample_repo, tmp_path):
+        """M4 前置：Workspace 层 read_only 真实阻止写入。"""
+        from repofix.workspace.manager import WorkspaceManager
+
+        handle = WorkspaceManager(tmp_path / "ws_ro").prepare("run_ro", sample_repo, "HEAD")
+        ws = DockerWorkspace(handle.task_dir, handle.run_id, base_commit=handle.base_commit, read_only=True)
+        current = read_hash(ws, "auth.py")
+        patch = (
+            "diff --git a/auth.py b/auth.py\n"
+            "--- a/auth.py\n"
+            "+++ b/auth.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def validate_password(pw: str) -> bool:\n"
+            "-    return len(pw) >= 0\n"
+            "+    return len(pw) >= 8\n"
+        )
+        result = ws.apply_patch("auth.py", patch, expected_sha256=current)
+        assert result.error_code is ToolErrorCode.PERMISSION_DENIED
+        assert read_hash(ws, "auth.py") == current
+
+
+class TestListFilesScope:
+    """评审 P1：list_files(path) 必须严格限定目录范围。"""
+
+    def test_path_scoped_listing_excludes_other_dirs(self, task_workspace):
+        ws = task_workspace
+        src = ws.task_dir / "src"
+        src.mkdir()
+        (src / "inner.py").write_text("x = 1\n", encoding="utf-8")
+        (ws.task_dir / "toplevel.txt").write_text("t\n", encoding="utf-8")
+
+        result = ws.list_files(path="src", max_depth=3, limit=100)
+        assert result.status is ExecutionStatus.SUCCEEDED
+        assert "src/inner.py" in result.content
+        assert "toplevel.txt" not in result.content
+        assert "auth.py" not in result.content  # 顶层文件不属于 src 子树
+
+    def test_top_level_listing_unchanged(self, task_workspace):
+        result = task_workspace.list_files(path=".", max_depth=3, limit=100)
+        assert "auth.py" in result.content
+
+
+class TestRgOptionTerminator:
+    """评审 P1：pattern 前插入 --，- 开头的搜索词不被误解析为选项。"""
+
+    def test_build_rg_argv_inserts_dash_dash_before_pattern(self):
+        from repofix.workspace.docker_workspace import build_rg_argv
+
+        argv = build_rg_argv("-version", ".", regex=False, glob=None, limit=100)
+        dd = argv.index("--")
+        assert argv[dd + 1] == "-version"
+        assert "--fixed-strings" in argv[:dd]  # 选项都在 -- 之前
+
+
+class TestGetChangesFixedBase:
+    """评审 P1：get_changes 使用固定 base_commit，HEAD 漂移报错。"""
+
+    def test_head_drift_raises_workspace_error(self, task_workspace):
+        from repofix.workspace.docker_workspace import _git
+        from repofix.workspace.errors import WorkspaceError
+
+        ws = task_workspace
+        # 模拟 HEAD 漂移：副本内产生新提交
+        (ws.task_dir / "drift.txt").write_text("drift\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=ws.task_dir)
+        _git(["-c", "user.email=d@d", "-c", "user.name=d", "commit", "-q", "-m", "drift"], cwd=ws.task_dir)
+        try:
+            ws.get_changes()
+            raised = False
+        except WorkspaceError as exc:
+            raised = "drifted" in str(exc)
+        assert raised, "HEAD drift must raise WorkspaceError"

@@ -68,7 +68,7 @@ def main() -> int:
     manager = WorkspaceManager(tmp / "workspaces")
     handle = manager.prepare(RUN_ID, repo, "HEAD")
     cli = DockerCli()
-    workspace = DockerWorkspace(handle.task_dir, RUN_ID, cli=cli)
+    workspace = DockerWorkspace(handle.task_dir, RUN_ID, base_commit=handle.base_commit, cli=cli)
     preflight = PreflightRunner(cli=cli)
     report = preflight.run(workspace, "python -m pytest -q --tb=no -rf")
     print(f"preflight ok={report.ok} baseline={report.baseline.get('kind')}")

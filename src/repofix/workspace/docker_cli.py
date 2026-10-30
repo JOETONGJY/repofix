@@ -131,6 +131,34 @@ class DockerCli:
         """终止容器（= 终止容器内全部进程树）。"""
         self.run(["stop", "-t", "10", name], timeout=timeout)
 
+    def ensure_container_stopped(self, name: str, timeout: int = 60) -> None:
+        """停止容器并**确认**其不再运行；必要时强制移除。
+
+        超时清理（评审 P0-3）：只调用 stop 不检查结果是不够的——运行中的超时进程
+        可能继续修改挂载的任务目录。确认流程：stop → inspect State.Running →
+        仍在运行则 rm -f → 再次 inspect；仍无法确认 → 抛出携带容器标识的错误。
+        容器不存在视为已停止（移除完成）。
+        """
+        self.run(["stop", "-t", "10", name], timeout=timeout)
+        self._assert_not_running(name)
+
+    def _assert_not_running(self, name: str, timeout: int = 60) -> None:
+        result = self.run(
+            ["container", "inspect", "-f", "{{.State.Running}}", name], timeout=30
+        )
+        if result.returncode != 0:
+            return  # 容器不存在 = 已停止
+        if result.stdout.strip() != "true":
+            return  # 已停止（存在但未运行）
+        self.run(["rm", "-f", name], timeout=timeout)
+        recheck = self.run(
+            ["container", "inspect", "-f", "{{.State.Running}}", name], timeout=30
+        )
+        if recheck.returncode == 0 and recheck.stdout.strip() == "true":
+            raise DockerCliError(
+                f"container '{name}' is STILL RUNNING after stop and forced removal"
+            )
+
     def remove_container(self, name: str, timeout: int = 60) -> None:
         result = self.run(["rm", "-f", name], timeout=timeout)
         _ = result  # 容器不存在时 rm -f 返回非零：幂等容忍

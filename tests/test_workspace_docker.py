@@ -30,7 +30,7 @@ def real_workspace(sample_repo, tmp_path):
     if not docker_available():
         pytest.skip("Docker or repofix-env image not available")
     handle = WorkspaceManager(tmp_path / "ws").prepare("run_it", sample_repo, "HEAD")
-    ws = DockerWorkspace(handle.task_dir, handle.run_id, cli=DockerCli())
+    ws = DockerWorkspace(handle.task_dir, handle.run_id, base_commit=handle.base_commit, cli=DockerCli())
     yield ws
     ws.close()
 
@@ -135,7 +135,7 @@ class TestPreflight:
         if not docker_available():
             pytest.skip("Docker not available")
         handle = WorkspaceManager(tmp_path / "ws2").prepare("run_pf2", sample_repo, "HEAD")
-        ws = DockerWorkspace(handle.task_dir, handle.run_id, cli=DockerCli())
+        ws = DockerWorkspace(handle.task_dir, handle.run_id, base_commit=handle.base_commit, cli=DockerCli())
         runner = PreflightRunner(cli=ws._cli, image="no-such-image:latest")
         report = runner.run(ws, None)
         assert report.ok is False
@@ -172,3 +172,85 @@ class TestWs05WorkflowIsolation:
         assert "auth.py" in changes["changed_files"]
         assert "return len(pw) >= 8" in changes["diff"]
         assert len(changes["patch_hash"]) == 64
+
+
+class TestPreflightRevised:
+    """评审 P0-2：环境阻塞必须 fail；基线分类准确。"""
+
+    def test_unallowed_test_command_fails_preflight(self, real_workspace):
+        runner = PreflightRunner(cli=real_workspace._cli, image=IMAGE)
+        report = runner.run(real_workspace, "pip install requests && python -m pytest")
+        assert report.ok is False
+        assert report.failure_step == "test_command_policy"
+
+    def test_environment_blocked_baseline_fails_preflight(self, sample_repo, tmp_path):
+        """退出码非 0/1/5（如 python 崩溃 rc=2 用法错误）→ Preflight 失败。"""
+        if not docker_available():
+            pytest.skip("Docker not available")
+        handle = WorkspaceManager(tmp_path / "ws3").prepare("run_pf3", sample_repo, "HEAD")
+        cli = DockerCli()
+        ws = DockerWorkspace(handle.task_dir, handle.run_id, base_commit=handle.base_commit, cli=cli)
+        runner = PreflightRunner(cli=cli, image=IMAGE)
+        # python -m compileall 对不存在路径 → exit 2（用法/环境错误）
+        report = runner.run(ws, "python -m pytest /nonexistent-path-xyz")
+        assert report.ok is False
+        assert report.failure_step == "baseline_environment"
+
+
+class TestBaselineClassification:
+    """基线分类纯函数：不允许环境失败被误标 passed。"""
+
+    def test_exit1_with_parseable_failures(self):
+        from repofix.workspace.preflight import classify_baseline
+
+        out = "1 failed\nFAILED tests/test_auth.py::test_x - assert False"
+        result = classify_baseline(1, out)
+        assert result["kind"] == "baseline_assertion_failures"
+        assert result["failed_tests"] == ["tests/test_auth.py::test_x"]
+
+    def test_exit1_without_parseable_failures_not_marked_passed(self):
+        from repofix.workspace.preflight import classify_baseline
+
+        result = classify_baseline(1, "Ran 3 tests\nFAILED (failures=2)")  # unittest 输出
+        assert result["kind"] == "assertion_failures_unparsed"
+        assert "passed" not in result["kind"]
+
+    def test_no_tests_clearly_marked(self):
+        from repofix.workspace.preflight import classify_baseline
+
+        assert classify_baseline(5, "no tests ran")["kind"] == "no_tests"
+
+    def test_environment_exit_codes_blocked(self):
+        from repofix.workspace.preflight import classify_baseline
+
+        for code in (2, 3, 4, None):
+            assert classify_baseline(code, "boom")["kind"] == "environment_blocked"
+
+    def test_clean_pass(self):
+        from repofix.workspace.preflight import classify_baseline
+
+        assert classify_baseline(0, "1 passed in 0.01s")["kind"] == "baseline_passed"
+
+
+class TestTimeoutCleanupVerified:
+    """评审 P0-3：超时后容器确认终止；无法确认时消息明确。"""
+
+    def test_timeout_message_states_cleanup_status(self, real_workspace):
+        from repofix.tools.dispatcher import ExecutorCrashError
+
+        ws = real_workspace
+        ws.initialize(IMAGE)
+        ws._command_timeout = 1
+        try:
+            ws.run_command(
+                ["python", "-m", "compileall", "-q", "-f", "/usr/local/lib/python3.12"], call_id="c_tmo"
+            )
+            raise AssertionError("expected ExecutorCrashError")
+        except ExecutorCrashError as exc:
+            message = str(exc)
+            assert "timed out" in message
+            # 必须明确说明清理是否被确认，不能含糊
+            assert "container stopped, verified" in message or "CLEANUP UNVERIFIED" in message
+        # 容器确认不再运行（真实 docker inspect）
+        inspect = ws._cli.run(["container", "inspect", "-f", "{{.State.Running}}", ws.container_name], timeout=30)
+        assert inspect.returncode != 0 or inspect.stdout.strip() != "true"
