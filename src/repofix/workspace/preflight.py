@@ -143,7 +143,11 @@ class PreflightRunner:
         return report
 
     def _run_baseline(self, workspace: DockerWorkspace, test_plan: list[list[str]]) -> dict:
-        """运行规定测试一次，记录基线分类（classify_baseline 纯函数判定）。"""
+        """运行规定测试，记录基线分类（classify_baseline 纯函数判定）。
+
+        多条命令按 `&&` 语义短路：前一条非零即停止后续执行——
+        失败退出码不能被后续成功命令覆盖（评审复核修订）。
+        """
         combined_out: list[str] = []
         exit_code: int | None = 0
         try:
@@ -151,6 +155,8 @@ class PreflightRunner:
                 outcome = workspace.run_command(argv, cwd=".", timeout_seconds=300, call_id="preflight-baseline")
                 combined_out.append(outcome.content)
                 exit_code = outcome.exit_code
+                if exit_code != 0:
+                    break  # && 短路：失败结果保持，不被后续命令覆盖
         except Exception as exc:  # noqa: BLE001 —— 基线运行故障按环境阻塞记录
             return {"kind": "environment_blocked", "exit_code": None, "detail": str(exc)[:500]}
         result = classify_baseline(exit_code, "\n".join(combined_out))

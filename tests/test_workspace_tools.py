@@ -408,3 +408,30 @@ class TestGetChangesFixedBase:
         except WorkspaceError as exc:
             raised = "drifted" in str(exc)
         assert raised, "HEAD drift must raise WorkspaceError"
+
+
+class TestPreflightMultiCommandShortCircuit:
+    """复核修订：多条 && 测试命令的失败退出码不得被后续成功命令覆盖。"""
+
+    def test_failed_first_command_short_circuits(self, sample_repo, tmp_path):
+        """pytest(rc=1) && compileall(rc=0)：短路后基线不得为 baseline_passed。"""
+        from repofix.workspace.docker_workspace import DockerWorkspace
+        from repofix.workspace.manager import WorkspaceManager
+        from repofix.workspace.preflight import PreflightRunner
+        from tests.conftest import FakeDockerCli
+
+        handle = WorkspaceManager(tmp_path / "ws_mc").prepare("run_mc", sample_repo, "HEAD")
+        cli = FakeDockerCli(exec_results=[
+            CliResult(0, "Python 3.12", ""), CliResult(0, "", ""),  # 依赖 probes
+            CliResult(0, "ripgrep", ""), CliResult(0, "git version", ""),
+            CliResult(1, "1 failed\nFAILED tests/test_auth.py::test_empty_password_rejected", ""),  # pytest 失败
+            CliResult(0, "compiling...", ""),  # compileall 不应执行
+        ])
+        ws = DockerWorkspace(handle.task_dir, handle.run_id, base_commit=handle.base_commit, cli=cli)
+        runner = PreflightRunner(cli=cli)
+        report = runner.run(ws, "python -m pytest -q --tb=no -rf && python -m compileall -q .")
+        assert report.ok is True  # 断言失败是有效基线，Preflight 放行
+        assert report.baseline["kind"] == "baseline_assertion_failures"
+        assert report.baseline["exit_code"] == 1  # 保留失败码，未被覆盖
+        # 短路：4 个 probe + 1 条命令，第二条未执行
+        assert len(cli.exec_calls) == 5

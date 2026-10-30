@@ -134,30 +134,58 @@ class DockerCli:
     def ensure_container_stopped(self, name: str, timeout: int = 60) -> None:
         """停止容器并**确认**其不再运行；必要时强制移除。
 
-        超时清理（评审 P0-3）：只调用 stop 不检查结果是不够的——运行中的超时进程
-        可能继续修改挂载的任务目录。确认流程：stop → inspect State.Running →
-        仍在运行则 rm -f → 再次 inspect；仍无法确认 → 抛出携带容器标识的错误。
-        容器不存在视为已停止（移除完成）。
+        超时清理（评审 P0-3 + 复核加固）：只调用 stop 不检查结果是不够的——运行中的
+        超时进程可能继续修改挂载的任务目录；同样，inspect 查询失败不能冒充"容器不存在"。
+        确认流程：stop（容忍已停止）→ inspect State.Running → 仍在运行则 rm -f →
+        再次 inspect。任何无法确认的状态都以携带容器标识的错误抛出。
         """
-        self.run(["stop", "-t", "10", name], timeout=timeout)
+        stop = self.run(["stop", "-t", "10", name], timeout=timeout)
+        if stop.returncode != 0 and not self._benign_stop_error(stop.stderr):
+            raise DockerCliError(
+                f"docker stop failed for container '{name}': {stop.stderr.strip()[:200]}"
+            )
         self._assert_not_running(name)
 
-    def _assert_not_running(self, name: str, timeout: int = 60) -> None:
+    @staticmethod
+    def _benign_stop_error(stderr: str) -> bool:
+        lowered = stderr.lower()
+        # 容器已停止 / 已不存在：stop 非零属正常
+        return "already stopped" in lowered or "no such container" in lowered
+
+    def _inspect_running(self, name: str) -> bool | None:
+        """查询容器运行状态。True/False = 确认运行中/已停止；None = 无法确认（查询失败）。"""
         result = self.run(
             ["container", "inspect", "-f", "{{.State.Running}}", name], timeout=30
         )
-        if result.returncode != 0:
-            return  # 容器不存在 = 已停止
-        if result.stdout.strip() != "true":
-            return  # 已停止（存在但未运行）
+        if result.returncode == 0:
+            return result.stdout.strip() == "true"
+        # 非零退出必须区分"确实不存在"与"查询异常"（daemon 失联 / 权限等）——
+        # 只有明确的 No such object 才能当作容器不存在
+        if "no such object" in result.stderr.lower():
+            return False
+        return None
+
+    def _assert_not_running(self, name: str, timeout: int = 60) -> None:
+        running = self._inspect_running(name)
+        if running is None:
+            raise DockerCliError(
+                f"CLEANUP UNVERIFIED: docker inspect failed for container '{name}' "
+                "(daemon/query error); cannot confirm the container stopped"
+            )
+        if running is False:
+            return  # 确认已停止（存在但未运行，或已移除）
         self.run(["rm", "-f", name], timeout=timeout)
-        recheck = self.run(
-            ["container", "inspect", "-f", "{{.State.Running}}", name], timeout=30
-        )
-        if recheck.returncode == 0 and recheck.stdout.strip() == "true":
+        recheck = self._inspect_running(name)
+        if recheck is True:
             raise DockerCliError(
                 f"container '{name}' is STILL RUNNING after stop and forced removal"
             )
+        if recheck is None:
+            raise DockerCliError(
+                f"CLEANUP UNVERIFIED: cannot confirm container '{name}' state after "
+                "forced removal (docker inspect failed)"
+            )
+        # recheck is False：确认已移除或已停止
 
     def remove_container(self, name: str, timeout: int = 60) -> None:
         result = self.run(["rm", "-f", name], timeout=timeout)
