@@ -69,7 +69,11 @@ class RunConfig(BaseModel):
     model_retry_limit: int = Field(default=2, ge=0)
     no_progress_repeat_threshold: int = Field(default=3, ge=1)
     no_progress_terminate_threshold: int = Field(default=5, ge=1)
+    # Context 层工具输出软预算（字符）；Dispatcher 另有 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
     tool_output_truncate_chars: int = Field(default=2000, ge=1)
+    # —— Context Engine（design/07：B_input = B_context − B_output_reserve − B_safety；None = 不裁剪）——
+    context_window_tokens: int | None = None
+    output_reserve_tokens: int = Field(default=4096, ge=0)
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
     review_enabled: bool = True
     max_reviewer_model_calls: int = Field(default=3, ge=1)

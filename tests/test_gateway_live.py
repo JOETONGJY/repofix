@@ -12,12 +12,18 @@ from repofix.gateway import DeepSeekAdapter, ModelProtocolError, ModelTransientE
 
 pytestmark = pytest.mark.integration
 
-pytest.skip(allow_module_level=True) if not os.environ.get("DEEPSEEK_API_KEY") else None
+# 双重门控（花费纪律）：integration 标记之外，还必须显式设置 REPOFIX_LIVE_PROTOCOL_TEST=1
+# 才会真实调用 API（每次约百级 tokens）。默认的全量回归永远不花钱。
+if not (os.environ.get("DEEPSEEK_API_KEY") and os.environ.get("REPOFIX_LIVE_PROTOCOL_TEST") == "1"):
+    pytest.skip(
+        allow_module_level=True,
+        reason="live protocol test requires DEEPSEEK_API_KEY + REPOFIX_LIVE_PROTOCOL_TEST=1",
+    )
 
 
 def test_live_deepseek_tool_calling_round_trip():
     """真实端到端：一次带工具的最小请求返回可解析的 tool_calls（或优雅的协议错误）。"""
-    adapter = DeepSeekAdapter(retry_limit=1)  # 从 DEEPSEEK_API_KEY 构造真实传输
+    adapter = DeepSeekAdapter(api_key=os.environ["DEEPSEEK_API_KEY"], retry_limit=1)
     request = ModelRequest(
         actor=AgentActor.MAIN,
         model_id="deepseek-flash",

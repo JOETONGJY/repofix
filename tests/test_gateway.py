@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from repofix.contracts import AgentActor, ModelRequest
+from repofix.contracts import AgentActor, ExecutionStatus, ModelRequest, ToolResult
 from repofix.gateway import (
     DeepSeekAdapter,
     ModelPermanentError,
@@ -162,6 +162,10 @@ class TestGw05ProviderMetadata:
         builder = ContextBuilder("rules")
         builder.start_task("task")
         builder.record_response(response)
+        builder.record_results(
+            [ToolResult(call_id="call_1", status=ExecutionStatus.SUCCEEDED, content="data")],
+            response.tool_calls,
+        )
         next_messages = builder.next_messages()
         assistant = [m for m in next_messages if m.get("role") == "assistant"][0]
         assert assistant["reasoning_content"] == "let me think about auth.py"  # 下一轮请求中保留

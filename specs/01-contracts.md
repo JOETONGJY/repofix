@@ -122,6 +122,8 @@ class RunConfig(BaseModel):
     no_progress_repeat_threshold: int = 3
     no_progress_terminate_threshold: int = 5
     tool_output_truncate_chars: int = 2000 # Context 层工具输出软预算（字符）；Dispatcher 另有 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
+    context_window_tokens: int | None = None  # 模型上下文窗口（design/07；None = 不裁剪）
+    output_reserve_tokens: int = 4096         # 本轮输出预留（B_output_reserve）
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
     review_enabled: bool = True
     max_reviewer_model_calls: int = 3

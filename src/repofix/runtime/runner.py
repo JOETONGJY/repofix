@@ -6,6 +6,7 @@ finish 是 Runtime 控制动作，经 Final Verification 决定是否接受；
 """
 import uuid
 
+from repofix.context import ContextBudgetExceeded
 from repofix.context.builder import ContextBuilder
 from repofix.contracts import (
     AgentActor,
@@ -77,7 +78,12 @@ class AgentRunner:
         self._store = store
         self._verifier = verifier
         self._clock = clock
-        self._context = ContextBuilder(system_rules)
+        self._context = ContextBuilder(
+            system_rules,
+            context_window_tokens=config.context_window_tokens,
+            output_reserve_tokens=config.output_reserve_tokens,
+            tool_output_soft_chars=config.tool_output_truncate_chars,
+        )
         self._budget = BudgetTracker(config, clock)
         self._scheduler = ToolBatchScheduler(
             run_id=run_id,
@@ -112,7 +118,7 @@ class AgentRunner:
         # M2 起由 WorkspaceManager 执行真实 Preflight（Clone / 容器 / 依赖 / 基线测试）
         self._append_event(EventType.PREFLIGHT_COMPLETED, {"mode": "m1_no_workspace"})
         self._transition(RunStatus.RUNNING)
-        self._context.start_task(self._task.instruction)
+        self._context.start_task(self._task.instruction, self._task.base_commit)
 
         protocol_retry_used = False
         while True:
@@ -126,6 +132,17 @@ class AgentRunner:
 
             try:
                 response = self._request_model()
+            except ContextBudgetExceeded as exc:
+                # CX-04：紧急压缩一次后仍超限 → 受控失败，无静默截断（specs/02 Context Policy）
+                self._append_event(
+                    EventType.CONTEXT_BUDGET_EXCEEDED,
+                    {"detail": str(exc)[:200], "step": self._step},
+                )
+                return self._finish(
+                    RunStatus.FAILED,
+                    "context_budget_exceeded",
+                    fail_layer=FailureLayer.TOOL_SYSTEM,
+                )
             except ModelProtocolError as exc:
                 # Gateway 层协议错误（截断 / call_id 丢失或重复 / 结构损坏）：
                 # 完整响应接纳之前不执行任何工具，按有限协议纠正重发一次（RT-01/13 同策略）
@@ -246,7 +263,7 @@ class AgentRunner:
         request = ModelRequest(
             actor=AgentActor.MAIN,
             model_id=self._config.model_id,
-            messages=self._context.next_messages(),
+            messages=self._context.next_messages(self._working_state),
             tools=self._registry.view_for(AgentActor.MAIN),
             request_id=request_id,
         )
