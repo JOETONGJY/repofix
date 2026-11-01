@@ -83,6 +83,7 @@ class AgentRunner:
             context_window_tokens=config.context_window_tokens,
             output_reserve_tokens=config.output_reserve_tokens,
             tool_output_soft_chars=config.tool_output_truncate_chars,
+            tools_payload=self._registry.view_for(AgentActor.MAIN),
         )
         self._budget = BudgetTracker(config, clock)
         self._scheduler = ToolBatchScheduler(
@@ -265,6 +266,9 @@ class AgentRunner:
             model_id=self._config.model_id,
             messages=self._context.next_messages(self._working_state),
             tools=self._registry.view_for(AgentActor.MAIN),
+            # output_reserve_tokens 与请求 max_output_tokens 一致（评审 P0-2：
+            # B_input 公式预留的输出空间即请求的输出上限）
+            max_output_tokens=self._config.output_reserve_tokens,
             request_id=request_id,
         )
         self._append_event(

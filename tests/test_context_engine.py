@@ -54,7 +54,7 @@ class TestBudgetMath:
 
     def test_estimate_deterministic(self):
         messages = [{"role": "user", "content": "a" * 40}]
-        assert estimate_tokens(messages) == 4 + 10  # 开销 + 40/4
+        assert estimate_tokens(messages) == 8 + 40 // 3  # 协议开销 + 保守 3 字符/token
 
     def test_no_window_means_no_trimming(self):
         """context_window_tokens=None（默认）：M1 行为不变，不裁剪。"""
@@ -168,7 +168,7 @@ class TestCx04BudgetExceeded:
 
     def test_oldest_turns_dropped_before_failing(self):
         """有旧轮次可丢时先丢轮次，不轻易失败。"""
-        builder = build_builder(context_window_tokens=300, output_reserve_tokens=0)
+        builder = build_builder(context_window_tokens=320, output_reserve_tokens=0)
         for i in range(1, 4):
             add_turn(builder, f"d{i}", [make_tool_call(f"c{i}", "read_file", path=f"f{i}.py")],
                      [ToolResult(call_id=f"c{i}", status=ExecutionStatus.SUCCEEDED, content="R" * 5000)])
@@ -298,3 +298,102 @@ class TestGw05Compatibility:
         messages = builder.next_messages(WorkingState(run_id="r"))
         assistant = [m for m in messages if m.get("role") == "assistant"][0]
         assert assistant["reasoning_content"] == "thinking..."
+
+
+class TestM32ReviewRegressions:
+    """M3-2 源码评审（基线 71f473b）修订回归。"""
+
+    def test_p01_read_file_hash_survives_truncation(self):
+        """P0-1：长 read_file 截断后仍保留 sha256 与行号元数据。"""
+        import re as _re
+
+        builder = build_builder(tool_output_soft_chars=100)
+        sha = "a" * 64
+        body = "L" * 900
+        content = f"{body}\n[lines 1-200 of 500]\n[sha256={sha}]"
+        add_turn(builder, "d1", [make_tool_call("c1", "read_file", path="big.py")],
+                 [ToolResult(call_id="c1", status=ExecutionStatus.SUCCEEDED, content=content)])
+        messages = builder.next_messages(WorkingState(run_id="r"))
+        tool_msg = [m for m in messages if m.get("role") == "tool"][0]["content"]
+        assert f"[sha256={sha}]" in tool_msg  # 模型仍能拿到 apply_patch 所需 Hash
+        assert "[lines 1-200 of 500]" in tool_msg
+        assert "context budget" in tool_msg  # 正文确实被裁剪
+        assert not _re.search(r"\[sha256=[0-9a-f]{64}\]", tool_msg.replace(f"[sha256={sha}]", ""))
+        assert body[:50] in tool_msg  # 正文头部保留
+
+    def test_p02_tools_schema_and_reasoning_counted(self):
+        """P0-2：工具 Schema 开销计入预算——对照：带 Schema 时轮次被挤出，不带时保留。"""
+        import json as _json
+
+        big_tool = [{
+            "type": "function",
+            "function": {"name": "read_file", "description": "d" * 600,
+                         "parameters": {"type": "object", "properties": {}}},
+        }]
+
+        def build(with_tools: bool) -> ContextBuilder:
+            builder = ContextBuilder(
+                "system rules", context_window_tokens=400, output_reserve_tokens=0,
+                tools_payload=big_tool if with_tools else None,
+            )
+            builder.start_task("Fix the bug", base_commit="abc")
+            add_turn(builder, "d1", [make_tool_call("c1", "read_file", path="a.py")],
+                     [ToolResult(call_id="c1", status=ExecutionStatus.SUCCEEDED, content="R" * 600)])
+            return builder
+
+        state = WorkingState(run_id="r")
+        with_tools = _json.dumps(build(True).next_messages(state))
+        without_tools = _json.dumps(build(False).next_messages(state))
+        assert '"c1"' not in with_tools  # Schema 挤占预算：轮次被整体移除
+        assert '"c1"' in without_tools  # 无 Schema：同一轮次放得下 → 开销确实被计入
+
+    def test_p02_reasoning_content_in_estimate(self):
+        """P0-2：reasoning_content 计入 Token 估算。"""
+        from repofix.context import estimate_message_tokens
+
+        base = estimate_message_tokens({"role": "assistant"})
+        with_reasoning = estimate_message_tokens({"role": "assistant", "reasoning_content": "x" * 300})
+        assert with_reasoning - base >= 100
+
+    def test_p1_command_invalidates_confirmed_read(self):
+        """P1-1：run_command 之后，先前已确认的读取认知降级为 STALE。"""
+        builder = build_builder()
+        add_turn(builder, "d1", [make_tool_call("c1", "apply_patch", path="auth.py", patch="x")],
+                 [ToolResult(call_id="c1", status=ExecutionStatus.SUCCEEDED,
+                             content="patch applied to auth.py; new sha256=hash_new")])
+        add_turn(builder, "d2", [make_tool_call("c2", "read_file", path="auth.py")],
+                 [read_result("c2", "auth.py", "new body", "hash_new")])
+        state = WorkingState(run_id="r", modified_files=["auth.py"])
+        wm = [m for m in builder.next_messages(state)
+              if "[Working Memory]" in (m.get("content") or "")][0]["content"]
+        assert "confirmed current" in wm  # 命令前：读取认知有效
+        add_turn(builder, "d3", [make_tool_call("c3", "run_command",
+                                                argv=["python", "-m", "pytest"])],
+                 [ToolResult(call_id="c3", status=ExecutionStatus.SUCCEEDED, content="ok", exit_code=0)])
+        wm2 = [m for m in builder.next_messages(state)
+               if "[Working Memory]" in (m.get("content") or "")][0]["content"]
+        assert "STALE READ" in wm2  # 命令后：保守失效
+        assert "confirmed current" not in wm2
+
+    def test_p12_scrambled_results_use_correct_strategy(self):
+        """P1-2：乱序 ToolResult 按 call_id 配对——截断策略作用于正确的工具。"""
+        builder = build_builder(tool_output_soft_chars=100)
+        calls = [make_tool_call("c_read", "read_file", path="a.py"),
+                 make_tool_call("c_cmd", "run_command", argv=["python", "-m", "pytest"])]
+        results = [  # 乱序：命令结果在前，读取结果在后
+            ToolResult(call_id="c_cmd", status=ExecutionStatus.SUCCEEDED,
+                       content="C" * 900, exit_code=1),
+            ToolResult(call_id="c_read", status=ExecutionStatus.SUCCEEDED,
+                       content="R" * 600 + f"\n[sha256={'b' * 64}]"),
+        ]
+        builder.record_response(model_response("d1", calls))
+        builder.record_results(results, calls)
+        messages = builder.next_messages(WorkingState(run_id="r"))
+        by_id = {m["tool_call_id"]: m["content"] for m in messages if m.get("role") == "tool"}
+        read_content = by_id["c_read"]
+        cmd_content = by_id["c_cmd"]
+        assert "R" in read_content[:10]  # 读取：保留开头（头部正文）
+        assert f"[sha256={'b' * 64}]" in read_content  # 元数据保留（P0-1）
+        assert cmd_content.lstrip().startswith("[...context budget")  # 命令：严格配额 + 错误尾部
+        assert len(cmd_content) < 200
+        assert read_content.startswith("RRR")  # 不是命令输出的尾部策略

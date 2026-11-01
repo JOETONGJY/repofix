@@ -12,9 +12,14 @@ ContextBudgetExceeded（Runtime 记 CONTEXT_BUDGET_EXCEEDED 并受控失败）�
 
 压缩只改变模型视图，不删除运行事实（规则 B）——SQLite 原始事件完整保留。
 """
-from repofix.context.tokens import TokenBudgetManager
+import re
+
+from repofix.context.tokens import TokenBudgetManager, estimate_static_overhead
 from repofix.context.working_memory import render_working_memory
 from repofix.contracts import ExecutionStatus, ModelResponse, ToolCall, ToolResult, WorkingState
+
+# read_file 输出尾部的版本元数据（Workspace 契约）：Context 裁剪正文时必须保留（评审 P0-1）
+_READ_METADATA_RE = re.compile(r"(\n\[lines \d+-\d+ of \d+\])?(\n\[sha256=[0-9a-fA-F]{64}\])\s*$")
 
 
 class ContextPairingError(ValueError):
@@ -71,13 +76,15 @@ _EMERGENCY_CAP_CHARS_FLOOR = 200
 
 
 class _Turn:
-    """一个完整模型—工具轮次：1 条 assistant 消息 + 对应的全部 tool 结果消息。"""
+    """一个完整模型—工具轮次：1 条 assistant 消息 + 对应的全部 tool 结果消息。
+
+    配对按 call_id 映射建立（评审 P1-2）：渲染顺序跟随原始 Tool Call 顺序，
+    不依赖结果列表的排列顺序——截断策略因此始终作用于正确的工具类型。
+    """
 
     def __init__(self, response: ModelResponse, results: list[ToolResult]):
         self.response = response
-        self.pairs: list[tuple[ToolCall, ToolResult]] = list(
-            zip([c for c in response.tool_calls], results)
-        )
+        self.results_by_id: dict[str, ToolResult] = {result.call_id: result for result in results}
 
     def render(self, soft_chars: int, emergency: bool = False) -> list[dict]:
         response = self.response
@@ -103,19 +110,35 @@ class _Turn:
             ]
             entry.setdefault("content", None)
         messages = [entry]
-        for call, result in self.pairs:
+        for call in response.tool_calls:
+            result = self.results_by_id[call.call_id]  # record_results 已校验齐全
             text = render_tool_result(result)
+            body, metadata = _split_read_metadata(text, call.tool_name)
             if emergency:
                 cap = max(_EMERGENCY_CAP_CHARS_FLOOR, soft_chars // 4)
-                text = _trim_output(text, cap, keep_tail=True)
+                text = _trim_output(body, cap, keep_tail=True) + metadata
             else:
                 multiplier = _SOFT_CAP_MULTIPLIERS.get(call.tool_name, 2)
                 keep_tail = call.tool_name in ("run_command", "search_code")
-                text = _trim_output(text, soft_chars * multiplier, keep_tail=keep_tail)
+                text = _trim_output(body, soft_chars * multiplier, keep_tail=keep_tail) + metadata
             messages.append(
                 {"role": "tool", "tool_call_id": result.call_id, "content": text}
             )
         return messages
+
+
+def _split_read_metadata(text: str, tool_name: str) -> tuple[str, str]:
+    """拆分 read_file 输出尾部的版本元数据（[lines …] / [sha256=…]）。
+
+    元数据必须随裁剪后的正文一起回到模型可见内容（评审 P0-1）——否则模型
+    看得到源码却拿不到 apply_patch 所需的 expected_sha256。其他工具无此元数据。
+    """
+    if tool_name != "read_file":
+        return text, ""
+    match = _READ_METADATA_RE.search(text)
+    if not match:
+        return text, ""
+    return text[: match.start()], match.group(0)
 
 
 def json_dumps(arguments: dict) -> str:
@@ -134,6 +157,7 @@ class ContextBuilder:
         context_window_tokens: int | None = None,
         output_reserve_tokens: int = 4096,
         tool_output_soft_chars: int = 2000,
+        tools_payload: list[dict] | None = None,
     ):
         self._system_rules = system_rules
         self._window = context_window_tokens
@@ -141,13 +165,22 @@ class ContextBuilder:
         self._soft_chars = tool_output_soft_chars
         self._budget = None
         if context_window_tokens is not None:
-            self._budget = TokenBudgetManager(context_window_tokens, output_reserve_tokens)
+            # 工具 Schema 属于最终 ModelRequest 的固定开销，计入预算（评审 P0-2）
+            static_overhead = estimate_static_overhead(tools_payload or [])
+            self._budget = TokenBudgetManager(
+                context_window_tokens, output_reserve_tokens, static_overhead_tokens=static_overhead
+            )
         self._task: dict | None = None
         self._task_goal = ""
         self._base_commit = ""
         self._entries: list[tuple[str, object]] = []  # ("turn", _Turn) | ("note", dict)
         self._last_read_hashes: dict[str, str | None] = {}
         self._current_hashes: dict[str, str | None] = {}
+        # 操作序号（评审 P1-1）：run_command 可能修改任意文件——
+        # 命令之后未重读的文件一律视为过期，不再标记 confirmed current
+        self._op_counter = 0
+        self._last_read_op: dict[str, int] = {}
+        self._last_command_op = 0
 
     def start_task(self, instruction: str, base_commit: str = "") -> None:
         self._task = {"role": "user", "content": instruction}
@@ -209,6 +242,8 @@ class ContextBuilder:
                         modified_files=list(working_state.modified_files),
                         last_read_hashes=dict(self._last_read_hashes),
                         current_hashes=dict(self._current_hashes),
+                        last_read_ops=dict(self._last_read_op),
+                        last_command_op=self._last_command_op,
                         failed_tests=list(working_state.failed_tests),
                         unresolved_errors=list(working_state.unresolved_errors),
                     ),
@@ -265,24 +300,30 @@ class ContextBuilder:
         return messages
 
     def _track_file_versions(self, calls: list[ToolCall], results: list[ToolResult]) -> None:
-        """文件版本追踪（CX-06）：read 记录读取时哈希；patch/命令修改后标记当前哈希。"""
-        import hashlib
+        """文件版本追踪（CX-06 + 评审 P1-1）。
 
+        每个成功工具调用占一个操作序号：read 记录读取哈希与序号；patch 更新当前哈希；
+        **run_command 可能修改任意源文件**——命令之后未重读的文件一律不再标记
+        confirmed current（保守失效，与"Workspace 是文件事实来源"一致）。
+        """
         result_by_id = {result.call_id: result for result in results}
         for call in calls:
             result = result_by_id.get(call.call_id)
             if result is None or result.status is not ExecutionStatus.SUCCEEDED:
                 continue
+            self._op_counter += 1
             path = call.arguments.get("path") if isinstance(call.arguments, dict) else None
             if call.tool_name == "read_file" and path:
                 marker = "[sha256="
                 if marker in result.content:
                     self._last_read_hashes[path] = result.content.rsplit(marker, 1)[1].split("]")[0]
+                    self._last_read_op[path] = self._op_counter
             elif call.tool_name == "apply_patch" and path:
                 marker = "new sha256="
                 if marker in result.content:
-                    new_hash = result.content.rsplit(marker, 1)[1].split(")")[0].split("]")[0]
-                    self._current_hashes[path] = new_hash
+                    self._current_hashes[path] = result.content.rsplit(marker, 1)[1].split(")")[0].split("]")[0]
                 else:
                     self._current_hashes.setdefault(path, None)
-        _ = hashlib  # 保留：M3-4 Verifier 接入统一 hash 函数后在此复用
+            elif call.tool_name == "run_command":
+                # 保守失效：无法确定命令改了哪些文件，命令后所有已读认知降级
+                self._last_command_op = self._op_counter
