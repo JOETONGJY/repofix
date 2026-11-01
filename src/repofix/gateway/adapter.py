@@ -47,7 +47,7 @@ class DeepSeekAdapter:
                 raise ModelPermanentError("DeepSeek API key is required (DEEPSEEK_API_KEY)")
             transport = UrllibHttpTransport(base_url, api_key)
         self._transport = transport
-        self._on_attempt = on_attempt
+        self.on_attempt = on_attempt  # 公开可写：Runner 组装后注入预算计数钩子
         self._sleep = sleep
         self._retry_limit = retry_limit
 
@@ -56,8 +56,8 @@ class DeepSeekAdapter:
         attempt = 0
         while True:
             attempt += 1
-            if self._on_attempt:
-                self._on_attempt()
+            if self.on_attempt:
+                self.on_attempt()
             try:
                 result = self._transport.post("/chat/completions", payload, request.timeout_seconds)
             except TransportError as exc:

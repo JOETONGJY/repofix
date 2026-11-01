@@ -85,6 +85,9 @@ class SQLiteEventStore:
     """单一权威存储：运行状态与事件的权威来源（文件内容以 Workspace 为准）。"""
 
     def __init__(self, db_path: str | Path = ":memory:"):
+        path = Path(db_path) if str(db_path) != ":memory:" else None
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)  # 运行目录可能尚未创建
         self._conn = sqlite3.connect(str(db_path), isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)

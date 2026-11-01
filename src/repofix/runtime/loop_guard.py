@@ -21,6 +21,15 @@ class Clock(Protocol):
     def now(self) -> float: ...
 
 
+class SystemClock:
+    """生产时钟（墙钟，unix 秒）。"""
+
+    def now(self) -> float:
+        import time
+
+        return time.time()
+
+
 def normalized_call_key(call: ToolCall) -> str:
     """规范化参数哈希：sha256(tool_name + json.dumps(args, sort_keys=True))。"""
     return hashlib.sha256(

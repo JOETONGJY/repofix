@@ -43,6 +43,17 @@ BINARY_PROBE_BYTES = 8192
 CONTAINER_WORKSPACE_MOUNT = "/workspace"
 
 
+# 测试运行自身产生的缓存不进入候选版本（specs/03 WS-07：排除缓存/忽略文件）
+_DIFF_EXCLUDES = [
+    ":(exclude).pytest_cache",
+    ":(exclude)__pycache__",
+    ":(exclude)*.pyc",
+    ":(exclude).mypy_cache",
+    ":(exclude).ruff_cache",
+    ":(exclude).coverage",
+]
+
+
 def check_command_allowed(argv: list[str]) -> bool:
     """argv 前缀匹配白名单（精确元组匹配，不做字符串包含判断）。"""
     for allowed in ALLOWED_COMMANDS:
@@ -358,8 +369,9 @@ class DockerWorkspace:
         base = self._diff_base_commit()
         _git(["add", "--intent-to-add", "--all", "."], cwd=self.task_dir)
         try:
-            diff = _git(["diff", base], cwd=self.task_dir).stdout
-            names = _git(["diff", "--name-only", base], cwd=self.task_dir).stdout
+            diff = _git(["diff", base, "--", ".", *_DIFF_EXCLUDES], cwd=self.task_dir).stdout
+            names = _git(["diff", "--name-only", base, "--", ".", *_DIFF_EXCLUDES],
+                         cwd=self.task_dir).stdout
         finally:
             _git(["reset", "--quiet"], cwd=self.task_dir, check=False)
         return {

@@ -25,12 +25,13 @@ from repofix.workspace.docker_cli import CliResult
 class FakeDockerCli:
     """DockerCli 同接口 Fake：容器操作只记录，exec 返回预设结果。"""
 
-    def __init__(self, exec_results: list[CliResult] | None = None):
+    def __init__(self, exec_results: list[CliResult] | None = None, exec_hook=None):
         self.started: list[tuple[str, str]] = []
         self.stopped: list[str] = []
         self.removed: list[str] = []
         self.exec_calls: list[tuple[str, list[str], str]] = []
         self._exec_results = list(exec_results or [])
+        self.exec_hook = exec_hook  # 每次 exec 时触发（模拟命令对文件的副作用）
 
     def version(self) -> str:
         return "fake"
@@ -46,11 +47,20 @@ class FakeDockerCli:
 
     def exec(self, name: str, argv: list[str], timeout: int = 120, cwd_in_container: str = "/workspace") -> CliResult:
         self.exec_calls.append((name, argv, cwd_in_container))
+        if self.exec_hook:
+            self.exec_hook(argv)
         if self._exec_results:
-            return self._exec_results.pop(0)
+            item = self._exec_results.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
         return CliResult(0, "", "")
 
     def stop_container(self, name: str, timeout: int = 60) -> None:
+        self.stopped.append(name)
+
+    def ensure_container_stopped(self, name: str, timeout: int = 60) -> None:
+        """同接口确认停止：Fake 视为立即停止成功。"""
         self.stopped.append(name)
 
     def remove_container(self, name: str, timeout: int = 60) -> None:

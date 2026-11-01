@@ -85,7 +85,8 @@ class AgentRunner:
             tool_output_soft_chars=config.tool_output_truncate_chars,
             tools_payload=self._registry.view_for(AgentActor.MAIN),
         )
-        self._budget = BudgetTracker(config, clock)
+        self.budget = BudgetTracker(config, clock)  # 公开：CLI 组装 Gateway 预算钩子时使用
+        self._budget = self.budget
         self._scheduler = ToolBatchScheduler(
             run_id=run_id,
             dispatcher=dispatcher,
