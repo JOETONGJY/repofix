@@ -115,6 +115,8 @@ class AgentRunner:
         self._verification_status = VerificationStatus.NOT_RUN
         self._review_status: str | None = None
         self._reviewed_patch_hash: str | None = None
+        self._fix_mode = False
+        self._fix_deadline = 0
         self._token_usage: dict = {"prompt": 0, "completion": 0, "total": 0}
 
     # ---- 主循环 ----
@@ -140,7 +142,14 @@ class AgentRunner:
         protocol_retry_used = False
         while True:
             try:
-                self._budget.check_model_budget()
+                if getattr(self, "_fix_mode", False):
+                    # 修正模式（评审 P0-2）：额外模型调用 ≤ review_fix_model_calls，
+                    # 墙钟/Token 上限照常生效；修正预算耗尽 → BUDGET_EXCEEDED
+                    if self._budget.model_calls >= self._fix_deadline:
+                        raise BudgetViolation("review_fix_model_calls")
+                    self._budget.check_aux_budget()
+                else:
+                    self._budget.check_model_budget()
                 self._budget.check_tool_budget()
             except BudgetViolation as violation:
                 return self._finish(
@@ -380,17 +389,17 @@ class AgentRunner:
         返回 RunStatus（终态）或 "fix_feedback"（修正预算内回流继续修复）。
         """
         self._transition(RunStatus.REVIEWING)
-        review_runner = self._review_runner_factory(self._run_id)
-
+        review = None
+        review_runner = None
         candidate_diff = ""
         patch_hash = ""
-        review = None
         try:
+            review_runner = self._review_runner_factory(self._run_id)  # P1-2：构造失败同样降级
             changes = self._patch_hash_provider_full()
             candidate_diff, patch_hash = changes["diff"], changes["patch_hash"]
-        except Exception as exc:  # noqa: BLE001 —— 工作区不可读 → 审查无法进行
+        except Exception as exc:  # noqa: BLE001 —— Reviewer/工作区不可读 → 审查无法进行（RV-06）
             review = ReviewReport(status="INCONCLUSIVE", patch_hash="",
-                                  summary=f"workspace diff unavailable: {exc}")
+                                  summary=f"reviewer unavailable: {type(exc).__name__}: {exc}")
         if review is None:
             review = review_runner.review(ReviewRequest(
                 run_id=self._run_id,
@@ -401,6 +410,17 @@ class AgentRunner:
                 workspace_ref=self._run_id,
                 patch_hash=patch_hash,
             ))
+
+        # P1-1：审查前后核对真实工作区 Patch Hash——审查期间代码变化 → 审查无效（design/02 ⑤⑥）
+        if review.status in ("APPROVED", "FINDINGS"):
+            try:
+                current_hash = self._patch_hash_provider_full()["patch_hash"]
+            except Exception:  # noqa: BLE001
+                current_hash = None
+            if current_hash is not None and current_hash != patch_hash:
+                review = ReviewReport(status="INCONCLUSIVE", patch_hash=patch_hash, findings=[],
+                                      summary=(f"workspace changed during review "
+                                               f"({patch_hash[:12]} -> {current_hash[:12]}); review invalidated"))
 
         self._review_status = review.status
         self._reviewed_patch_hash = review.patch_hash or patch_hash
@@ -416,9 +436,11 @@ class AgentRunner:
             # RV-06：审查不可用/无法结论——保留确定性验证结果，正常完成并标记审查未完成
             return RunStatus.COMPLETED
 
-        # FINDINGS：一次受限修正，反馈回流；修正预算经 Main 正常计数，
-        # 修正后再次 VERIFYING 不再触发 Review（RV-04）
+        # FINDINGS：一次受限修正（评审 P0-2）：额外模型调用 ≤ review_fix_model_calls，
+        # 反馈回流；修正后再次 VERIFYING 不再触发 Review（RV-04）
         self._transition(RunStatus.RUNNING)
+        self._fix_deadline = self._budget.model_calls + max(1, self._config.review_fix_model_calls)
+        self._fix_mode = True
         self._context.record_findings_feedback(review)
         return "fix_feedback"
 

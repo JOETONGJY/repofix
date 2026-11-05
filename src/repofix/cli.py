@@ -21,8 +21,8 @@ from repofix.contracts import (
     TaskSpec,
     VerificationStatus,
 )
-from repofix.gateway.adapter import DeepSeekAdapter
-from repofix.runtime.loop_guard import SystemClock
+from repofix.gateway.adapter import DeepSeekAdapter, resolve_context_window
+from repofix.runtime.loop_guard import BudgetTracker, SystemClock
 from repofix.runtime.runner import AgentRunner
 from repofix.state import SQLiteEventStore
 from repofix.tools.dispatcher import ToolDispatcher
@@ -139,14 +139,26 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         return True
 
     def review_runner_factory(review_run_id: str):
-        # 延迟引用：factory 在 REVIEWING 阶段才被调用（runner 已构造）
+        # 延迟引用：factory 在 REVIEWING 阶段才被调用（runner 已构造）。
+        # 独立 Adapter 实例：Reviewer 的每次真实 API 尝试（含重试）计入 Reviewer 独立预算（评审 P1-3）
         from repofix.runtime.review_runner import ReviewRunner
 
+        reviewer_adapter = DeepSeekAdapter(
+            api_key=api_key, retry_limit=config.model_retry_limit, thinking="disabled",
+        )
+        reviewer_clock = SystemClock()
+        reviewer_budget = BudgetTracker(config, reviewer_clock)
+
+        def reviewer_attempt_hook():
+            # 仅占用 Reviewer 独立模型预算；Reviewer 工具调用已在 ReviewRunner 内计入全局
+            reviewer_budget.reserve_model_attempt()
+
+        reviewer_adapter.on_attempt = reviewer_attempt_hook
         return ReviewRunner(
             run_id=review_run_id, config=config,
-            model_client=adapter, registry=registry,
+            model_client=reviewer_adapter, registry=registry,
             workspace_executor=workspace.read_only_executor(),
-            store=store, clock=SystemClock(),
+            store=store, clock=reviewer_clock,
             global_tool_budget=runner.budget,
         )
 
@@ -214,6 +226,8 @@ def run(
     max_model_calls: int = typer.Option(30, "--max-model-calls", min=1),
     max_tool_calls: int = typer.Option(100, "--max-tool-calls", min=1),
     timeout: int = typer.Option(1200, "--timeout", min=1, help="单任务执行时限（秒）"),
+    review: bool = typer.Option(False, "--review/--no-review", help="启用 Read-only Review Agent"
+                                "（默认关闭 = 单 Agent Baseline；Experiment G 用不同取值运行）"),
 ) -> None:
     """一次性任务执行：输入任务 → 自主修复 → 输出 Patch / Trace / 报告。"""
     try:
@@ -231,8 +245,10 @@ def run(
         max_model_calls=max_model_calls,
         max_tool_calls=max_tool_calls,
         max_duration_seconds=timeout,
-        review_enabled=False,  # M3：单 Agent Baseline（review_enabled 不暴露为 CLI 参数）
+        review_enabled=review,  # --review 启用双 Agent（默认 False = 单 Agent Baseline，可复现）
         output_dir=str(output_dir),
+        # Context Budget 生产启用（评审 P0-1）：已验证模型的窗口来自 profile；未知模型不虚构容量
+        context_window_tokens=resolve_context_window(model),
     )
     task_spec = TaskSpec(
         instruction=instruction, repo_path=str(repo), base_commit=base_commit,

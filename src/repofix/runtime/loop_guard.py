@@ -97,6 +97,10 @@ class BudgetTracker:
         """发起模型调用前检查；触顶抛 BudgetViolation（Runner 转 BUDGET_EXCEEDED）。"""
         if self.model_calls >= self._config.max_model_calls:
             raise BudgetViolation("max_model_calls")
+        self.check_aux_budget()
+
+    def check_aux_budget(self) -> None:
+        """辅助预算（Token / 墙钟）——修正模式下独立于 max_model_calls 检查（评审 P0-2）。"""
         if self._config.max_total_tokens is not None and self.total_tokens >= self._config.max_total_tokens:
             raise BudgetViolation("max_total_tokens")
         if self._wall_clock_exceeded():
