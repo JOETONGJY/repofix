@@ -111,7 +111,7 @@ class DockerCli:
                 "--cpus", cpus,
                 "--pids-limit", str(pids_limit),
                 "--security-opt", "no-new-privileges",
-                "--volume", f"{task_dir}:/workspace",
+                "--volume", f"{Path(task_dir).resolve()}:/workspace",  # 绝对路径：相对路径会被 Docker 当作命名卷
                 "--workdir", "/workspace",
                 image,
                 "sleep", "infinity",

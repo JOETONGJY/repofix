@@ -36,6 +36,12 @@ from repofix.workspace.preflight import PreflightRunner
 
 app = typer.Typer(add_completion=False, help="RepoFix: Repository-Aware Coding Agent Harness")
 
+
+@app.callback()
+def _root() -> None:
+    """RepoFix: Repository-Aware Coding Agent Harness."""
+
+
 DEFAULT_MODEL = "deepseek-flash"
 
 
@@ -156,7 +162,6 @@ def _exit_code_for(result) -> int:
     return 3  # FAILED / CANCELLED：不可恢复错误
 
 
-@app.command()
 def run(
     repo: Path = typer.Option(..., "--repo", help="本地 Git 仓库路径"),
     task: Optional[str] = typer.Option(None, "--task", help="自然语言任务（与 --task-file 二选一）"),
@@ -241,6 +246,9 @@ def run(
     if interrupted:
         raise typer.Exit(130)
     raise typer.Exit(_exit_code_for(result))
+
+
+app.command()(run)
 
 
 def main() -> None:

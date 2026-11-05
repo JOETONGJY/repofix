@@ -32,6 +32,7 @@ cli_runner = CliRunner()
 
 def base_args(repo, output_dir, extra=None):
     args = [
+        "run",
         "--repo", str(repo),
         "--task", "Fix the login validation bug",
         "--output-dir", str(output_dir),
