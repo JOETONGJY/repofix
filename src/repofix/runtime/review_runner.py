@@ -42,7 +42,10 @@ REVIEW_SYSTEM_RULES = (
     "tools (list_files / search_code / read_file) to gather evidence. Never invent findings - "
     "every finding needs code-level evidence. When done, submit submit_review (alone in its batch) "
     "with status APPROVED (no unresolved findings), FINDINGS (max 5, each with evidence), or "
-    "INCONCLUSIVE (cannot review reliably). Do not comment on code style."
+    "INCONCLUSIVE (cannot review reliably). Do not comment on code style. "
+    "BUDGET: you have at most 3 model turns. Gather only the evidence you actually need, "
+    "and make sure your final turn submits submit_review - a review that never submits is "
+    "recorded as INCONCLUSIVE and wastes the review."
 )
 
 _STATUS_VALUES = {"APPROVED", "FINDINGS", "INCONCLUSIVE"}
@@ -131,10 +134,8 @@ class ReviewRunner:
         context.start_task(_review_task_text(request), base_commit=request.base_commit)
 
         for _ in range(self._config.max_reviewer_model_calls + 1):
-            try:
-                budget.check_tool_budget()
-            except BudgetViolation:
-                raise ReviewBudgetExceeded("reviewer tool budget exhausted") from None
+            # 工具预算只在只读分发时逐调用检查（评审复核边界 2）：
+            # 工具配额用尽后，模型仍可在剩余预算内单独提交 submit_review 结论
             response = self._model_client.complete(self._model_request(context, budget))
             self._step += 1
             self._append_event(

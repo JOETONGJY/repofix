@@ -149,41 +149,18 @@ class TestRv07PatchHashBinding:
 class TestRv04FeedbackLoop:
     """RV-04：FINDINGS → 修正 → 重新验证 → 不二次审查。"""
 
-    def _runner_with_review(self, findings_report, responses, config):
-        registry = ToolRegistry()
-        register_default_tools(registry)
-
-        class ScriptedReviewRunner:
-            def __init__(self, run_id):
-                self.review_calls = 0
-
-            def review(self, request):
-                self.review_calls += 1
-                return findings_report
-
-        factory = lambda run_id: ScriptedReviewRunner(run_id)  # noqa: E731
-        executor = FakeToolExecutor()
-        store = SQLiteEventStore(":memory:")
-        runner = AgentRunner(
-            run_id="run_m4", task=TaskSpec(**TASK_ARGS), config=config,
-            model_client=ScriptedModelClient(responses), registry=registry,
-            dispatcher=ToolDispatcher(registry, executor), store=store,
-            verifier=FakeVerifier([
-                self._passed(),   # 第一次 finish：验证通过 → 触发 Review
-                self._passed(),   # 修正后再次 finish：重新验证通过 → 不再 Review
-            ]),
-            clock=FakeClock(),
-            patch_hash_provider=lambda: "1" * 64,
-            review_runner_factory=factory,
-            reviewer_executor=executor,
-        )
-        return runner, store
-
     @staticmethod
     def _passed():
         return VerificationReport(
             candidate_revision="v", patch_status=PatchStatus.VALID,
             test_status=TestStatus.PASSED, outcome=VerificationOutcome.PASSED)
+
+    @staticmethod
+    def _failed():
+        return VerificationReport(
+            candidate_revision="v", patch_status=PatchStatus.VALID,
+            test_status=TestStatus.FAILED, outcome=VerificationOutcome.FAILED,
+            failed_tests=["tests/test_auth.py::test_x"])
 
     @staticmethod
     def _findings_report():
@@ -195,24 +172,57 @@ class TestRv04FeedbackLoop:
                           suggested_fix="return False for empty"),
         ], summary="needs guard")
 
+    def _runner_with_review(self, responses, verifier_reports, config, review_report=None):
+        """真实 Runner + 计数 Stub Reviewer（无 Docker：命令走 Fake 执行器）。"""
+        registry = ToolRegistry()
+        register_default_tools(registry)
+        self._stub_review_calls = {"n": 0}
+        report_to_return = review_report if review_report is not None else self._findings_report()
+
+        class ScriptedReviewRunner:
+            calls = 0
+            owner = None
+
+            def review(self, request):
+                self.__class__.calls += 1
+                self.__class__.owner._stub_review_calls["n"] += 1
+                return report_to_return
+
+        ScriptedReviewRunner.owner = self
+
+        def factory(run_id):
+            return ScriptedReviewRunner()
+
+        executor = FakeToolExecutor()
+        store = SQLiteEventStore(":memory:")
+        runner = AgentRunner(
+            run_id="run_m4", task=TaskSpec(**TASK_ARGS), config=config,
+            model_client=ScriptedModelClient(responses), registry=registry,
+            dispatcher=ToolDispatcher(registry, executor), store=store,
+            verifier=FakeVerifier(verifier_reports), clock=FakeClock(),
+            patch_hash_provider=lambda: "1" * 64,
+            review_runner_factory=factory,
+            reviewer_executor=executor,
+        )
+        return runner, store, ScriptedReviewRunner
+
     def test_findings_trigger_single_fix_cycle(self, registry, config):
         """FINDINGS → 修正回流 → 第二次验证通过 → COMPLETED（review 只发生一次）。"""
         config = RunConfig(model_id="m", review_enabled=True, review_fix_model_calls=3)
         responses = [
-            model_response("m1", [make_tool_call("f1", "finish", summary="first try")]),  # Review 触发
-            model_response("m2", [make_tool_call("c1", "read_file", path="auth.py")]),   # 修正轮（检查反馈在上下文）
+            model_response("m1", [make_tool_call("f1", "finish", summary="first try")]),
+            model_response("m2", [make_tool_call("c1", "read_file", path="auth.py")]),
             model_response("m3", [make_tool_call("f2", "finish", summary="fixed with guard")]),
         ]
-        runner, store = self._runner_with_review(
-            self._findings_report(), responses, config)
+        runner, store, StubReview = self._runner_with_review(
+            responses, [self._passed(), self._passed()], config)
         result = runner.run()
         assert result.runtime_status is RunStatus.COMPLETED
         assert result.review_status == "FINDINGS"
         assert result.reviewed_patch_hash == "1" * 64
-        # 只触发一次 Review：第二次 VERIFYING 不再进入 REVIEWING
+        assert StubReview.calls == 1  # 只触发一次 Review
         from repofix.contracts import EventType
         types = [e.type for e in store.get_events("run_m4")]
-        assert types.count(EventType.REVIEW_FINISHED) == 1
         assert types.count(EventType.VERIFICATION_FINISHED) == 2
 
     def test_findings_feedback_reaches_main_context(self, registry):
@@ -222,7 +232,8 @@ class TestRv04FeedbackLoop:
             model_response("m1", [make_tool_call("f1", "finish", summary="first")]),
             model_response("m2", [make_tool_call("f2", "finish", summary="second")]),
         ]
-        runner, _ = self._runner_with_review(self._findings_report(), responses, config)
+        runner, _, _ = self._runner_with_review(
+            responses, [self._passed(), self._passed()], config)
         client = runner._model_client
         runner.run()
         second_messages = client.requests[1].messages
@@ -237,72 +248,28 @@ class TestRv04FeedbackLoop:
         config = RunConfig(model_id="m", review_enabled=True)
         approved = ReviewReport(status="APPROVED", patch_hash="1" * 64, findings=[], summary="clean")
         responses = [model_response("m1", [make_tool_call("f1", "finish", summary="done")])]
-        runner, store = self._runner_with_review(approved, responses, config)
+        runner, _, _ = self._runner_with_review(
+            responses, [self._passed()], config, review_report=approved)
         result = runner.run()
         assert result.runtime_status is RunStatus.COMPLETED
         assert result.review_status == "APPROVED"
 
-    def test_second_verification_never_re_reviews_even_when_findings_repeat(self, registry, config):
-        """修正后再验证失败回流修正预算内……不二次审查（RV-04 尾段）。"""
+    def test_second_verification_never_re_reviews_even_when_findings_repeat(self, registry):
+        """第二次验证失败 → 回流（不二次审查）→ 第三次验证通过 → COMPLETED。"""
         config = RunConfig(model_id="m", review_enabled=True)
         responses = [
             model_response("m1", [make_tool_call("f1", "finish", summary="first")]),
             model_response("m2", [make_tool_call("f2", "finish", summary="second")]),
             model_response("m3", [make_tool_call("f3", "finish", summary="third")]),
         ]
-        # 第二次验证失败 → 回流（不再触发 Review）→ 第三次验证通过 → COMPLETED
-
-        registry2 = ToolRegistry()
-        register_default_tools(registry2)
-
-        class ScriptedReviewRunner:
-            def __init__(self, run_id):
-                pass
-
-            def review(self, request):
-                return self._findings_report()
-
-            def _findings_report(self):
-                return self._findings_report_static()
-
-            @staticmethod
-            def _findings_report_static():
-                from repofix.contracts import ReviewFinding, ReviewReport
-
-                return ReviewReport(status="FINDINGS", patch_hash="1" * 64, findings=[
-                    ReviewFinding(finding_id="f1", file_path="auth.py", severity="low",
-                                  reason="r", evidence="e")], summary="s")
-
-        executor = FakeToolExecutor()
-        store = SQLiteEventStore(":memory:")
-        runner = AgentRunner(
-            run_id="run_m4b", task=TaskSpec(**TASK_ARGS), config=config,
-            model_client=ScriptedModelClient(responses), registry=registry2,
-            dispatcher=ToolDispatcher(registry2, executor), store=store,
-            verifier=FakeVerifier([
-                self._passed(),   # 第一次 finish → Review 触发 → FINDINGS
-                self._failed(),   # 修正后再验证：失败 → 回流（不二次 Review）
-                self._passed(),   # 第三次验证通过 → COMPLETED
-            ]),
-            clock=FakeClock(),
-            patch_hash_provider=lambda: "1" * 64,
-            review_runner_factory=lambda rid: ScriptedReviewRunner(rid),
-            reviewer_executor=executor,
-        )
+        runner, store, StubReview = self._runner_with_review(
+            responses, [self._passed(), self._failed(), self._passed()], config)
         result = runner.run()
         assert result.runtime_status is RunStatus.COMPLETED
+        assert StubReview.calls == 1  # 仍然只一轮审查
         from repofix.contracts import EventType
-        types = [e.type for e in store.get_events("run_m4b")]
-        assert types.count(EventType.REVIEW_FINISHED) == 1  # 仍然只一轮审查
+        types = [e.type for e in store.get_events("run_m4")]
         assert types.count(EventType.VERIFICATION_FINISHED) == 3
-
-    @staticmethod
-    def _failed():
-        return VerificationReport(
-            candidate_revision="v", patch_status=PatchStatus.VALID,
-            test_status=TestStatus.FAILED, outcome=VerificationOutcome.FAILED,
-            failed_tests=["tests/test_auth.py::test_x"])
-
 
 class TestRv01TriggerRules:
     def _runner(self, config, report):
@@ -311,6 +278,7 @@ class TestRv01TriggerRules:
         review_calls = {"n": 0}
 
         class ScriptedReviewRunner:
+            last_instance = None
             def review(self, request):
                 review_calls["n"] += 1
                 from repofix.contracts import ReviewReport
@@ -365,6 +333,7 @@ class TestRv01TriggerRules:
         review_calls = {"n": 0}
 
         class ScriptedReviewRunner:
+            last_instance = None
             def review(self, request):
                 review_calls["n"] += 1
                 from repofix.contracts import ReviewReport

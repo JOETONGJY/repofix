@@ -1,4 +1,5 @@
 """M4 集成评审（复核）收尾回归：预算前置、混合拒批、修正 deadline、hash 复核、factory 降级。"""
+import pytest
 
 from repofix.contracts import (
     PatchStatus,
@@ -10,12 +11,13 @@ from repofix.contracts import (
     VerificationReport,
 )
 from repofix.gateway import ModelTransientError
-from repofix.runtime.loop_guard import BudgetTracker
+from repofix.runtime.loop_guard import BudgetTracker, BudgetViolation
 from repofix.runtime.review_runner import ReviewRunner
 from repofix.runtime.runner import AgentRunner
 from repofix.state import SQLiteEventStore
 from repofix.tools.dispatcher import ToolDispatcher
 from repofix.tools.registry import ToolRegistry, register_default_tools
+from repofix.workspace.errors import WorkspaceError
 from tests.conftest import (
     FakeClock,
     FakeToolExecutor,
@@ -242,3 +244,96 @@ class TestRetryCounting:
         # 第一次 Runtime 调用的 3 次尝试（含 Gateway 内部重试）全部计入独立预算
         assert report.status == "INCONCLUSIVE"
         assert reserve_calls == [1, 2, 3]
+
+
+class TestRecheckBoundaries:
+    """M4 修订复核的三个边界回归。"""
+
+    def test_boundary1_stage_limit_allows_fix_after_exhaustion(self):
+        """边界 1：原始 max_model_calls 耗尽后，修正阶段的 reserve 使用阶段上限。"""
+        from repofix.gateway import ModelTransientError
+
+        cfg = RunConfig(model_id="m", review_enabled=True, review_fix_model_calls=2,
+                        max_model_calls=1)
+        tracker = BudgetTracker(cfg, FakeClock())
+
+        class AttemptAdapter:
+            counts_own_attempts = True
+
+            def __init__(self):
+                self.on_attempt = None
+
+            def complete(self, request):
+                self.on_attempt()
+                raise ModelTransientError("429")  # 每次都失败，强制走满尝试
+
+        adapter = AttemptAdapter()
+        adapter.on_attempt = tracker.reserve_model_attempt
+        with pytest.raises(ModelTransientError):
+            adapter.complete(None)  # 第 1 次（=原始预算耗尽）
+        assert tracker.model_calls == 1
+
+        # FINDINGS → 修正模式：阶段上限 = 1 + 2
+        tracker.set_stage_model_limit(1 + 2)
+        with pytest.raises(ModelTransientError):
+            adapter.complete(None)  # 第 2 次：不再被原始预算拒绝
+        with pytest.raises(ModelTransientError):
+            adapter.complete(None)  # 第 3 次：阶段内
+        assert tracker.model_calls == 3
+        with pytest.raises(BudgetViolation):
+            tracker.reserve_model_attempt()  # 第 4 次：突破阶段上限 → 拒绝
+
+    def test_boundary2_tools_exhausted_still_can_submit(self, registry):
+        """边界 2：8 次工具配额用尽后，submit_review 仍可单独提交结论。"""
+        calls = [make_tool_call(f"c{i}", "read_file", path=f"f{i}.py") for i in range(8)]
+        submit = make_tool_call("sub", "submit_review", status="APPROVED", findings=[])
+        runner = ReviewRunner(
+            run_id="run_b2", config=RunConfig(model_id="m"),
+            model_client=ScriptedModelClient([
+                model_response("rd1", calls),        # 8 次只读：配额用尽
+                model_response("rd2", [submit]),      # 仅提交结论：必须被接受
+            ]),
+            registry=registry, workspace_executor=FakeToolExecutor(),
+            store=SQLiteEventStore(":memory:"), clock=FakeClock(),
+            global_tool_budget=BudgetTracker(RunConfig(model_id="m"), FakeClock()),
+        )
+        report = runner.review(
+            __import__("tests.test_review_agent", fromlist=["make_review_request"])
+            .make_review_request())
+        assert report.status == "APPROVED"  # 不因轮首工具预算检查提前 INCONCLUSIVE
+        assert report.patch_hash == "0" * 64
+
+    def test_boundary3_recheck_failure_downgrades_approval(self, registry):
+        """边界 3：审查后 hash 查询失败 → APPROVED 降级 INCONCLUSIVE（不默认接受）。"""
+        config = RunConfig(model_id="m", review_enabled=True)
+        registry2 = ToolRegistry()
+        register_default_tools(registry2)
+        calls = {"n": 0}
+
+        def failing_provider():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return "1" * 64  # 审查前：正常
+            raise WorkspaceError(  # 复核：失败
+                "workspace probe failed")
+
+        class ScriptedReview:
+            def review(self, request):
+                from repofix.contracts import ReviewReport
+                return ReviewReport(status="APPROVED", patch_hash=request.patch_hash)
+
+        runner = AgentRunner(
+            run_id="run_b3", task=TaskSpec(**TASK_ARGS), config=config,
+            model_client=ScriptedModelClient(
+                [model_response("m1", [make_tool_call("f1", "finish", summary="x")])]),
+            registry=registry2, dispatcher=ToolDispatcher(registry2, FakeToolExecutor()),
+            store=SQLiteEventStore(":memory:"),
+            verifier=FakeVerifier([_passed()]), clock=FakeClock(),
+            patch_hash_provider=failing_provider,
+            review_runner_factory=lambda rid: ScriptedReview(),
+            reviewer_executor=FakeToolExecutor(),
+        )
+        result = runner.run()
+        assert result.runtime_status is RunStatus.COMPLETED
+        assert result.review_status == "INCONCLUSIVE"  # 不默认接受
+        # 从事件 summary 验证降级原因（复核失败 → INCONCLUSIVE 而非默认接受）

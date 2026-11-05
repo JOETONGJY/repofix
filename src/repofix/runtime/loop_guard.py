@@ -56,6 +56,7 @@ class BudgetTracker:
         self._config = config
         self._clock = clock
         self._started_at = clock.now()
+        self._effective_model_limit = config.max_model_calls  # 阶段生效上限（修正阶段可放宽）
         self.model_calls = 0  # 模型 API 请求尝试数（含失败）
         self.tool_calls = 0  # 工具请求数（预算口径）
         self.tool_executions = 0  # 实际执行次数（效率统计）
@@ -78,13 +79,19 @@ class BudgetTracker:
         if usage:
             self._accumulate_tokens(usage)
 
+    def set_stage_model_limit(self, limit: int) -> None:
+        """修正阶段生效上限（评审复核边界 1）：原始预算耗尽后允许 review_fix_model_calls
+        的额外请求——底层 reserve 与阶段 deadline 使用同一上限，重试同样不能突破。"""
+        self._effective_model_limit = max(self._effective_model_limit, limit)
+
     def reserve_model_attempt(self) -> None:
         """原子语义：每次真实 API 请求发出前检查并占用预算（评审 P0-2）。
 
         Gateway 的内部重试每次都调用本方法——预算只剩 1 次时遇到 429，
         不会再发出额外请求。触顶抛 BudgetViolation（Runner 转 BUDGET_EXCEEDED）。
+        上限取阶段生效值（修正阶段 = 原始 + review_fix_model_calls）。
         """
-        if self.model_calls >= self._config.max_model_calls:
+        if self.model_calls >= self._effective_model_limit:
             raise BudgetViolation("max_model_calls")
         self.model_calls += 1
 

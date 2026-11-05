@@ -411,24 +411,25 @@ class AgentRunner:
                 patch_hash=patch_hash,
             ))
 
-        # P1-1：审查前后核对真实工作区 Patch Hash——审查期间代码变化 → 审查无效（design/02 ⑤⑥）
+        # P1-1：审查前后核对真实工作区 Patch Hash——审查期间代码变化或**无法确认未变化**
+        # （查询失败）→ 审查降级 INCONCLUSIVE，不得默认接受（评审复核边界 3）
         if review.status in ("APPROVED", "FINDINGS"):
+            current_hash = None
             try:
                 current_hash = self._patch_hash_provider_full()["patch_hash"]
             except Exception:  # noqa: BLE001
                 current_hash = None
-            if current_hash is not None and current_hash != patch_hash:
+            if current_hash is None or current_hash != patch_hash:
+                reason = (f"workspace changed during review "
+                          f"({patch_hash[:12]} -> {str(current_hash)[:12]})"
+                          if current_hash is not None else
+                          "could not confirm workspace unchanged after review")
                 review = ReviewReport(status="INCONCLUSIVE", patch_hash=patch_hash, findings=[],
-                                      summary=(f"workspace changed during review "
-                                               f"({patch_hash[:12]} -> {current_hash[:12]}); review invalidated"))
+                                      summary=f"{reason}; review invalidated")
 
         self._review_status = review.status
         self._reviewed_patch_hash = review.patch_hash or patch_hash
-        self._append_event(EventType.REVIEW_FINISHED, {
-            "status": review.status,
-            "findings": len(review.findings),
-            "patch_hash": self._reviewed_patch_hash,
-        })
+        # REVIEW_FINISHED 已由 ReviewRunner.review 记录（含 findings/summary 详情）——不重复记录
 
         if review.status == "APPROVED":
             return RunStatus.COMPLETED
@@ -441,6 +442,9 @@ class AgentRunner:
         self._transition(RunStatus.RUNNING)
         self._fix_deadline = self._budget.model_calls + max(1, self._config.review_fix_model_calls)
         self._fix_mode = True
+        # 底层 reserve 与阶段 deadline 使用同一上限（评审复核边界 1）：
+        # 原始 30 次耗尽后，修正阶段的第 31..33 次真实请求不再被拒
+        self._budget.set_stage_model_limit(self._fix_deadline)
         self._context.record_findings_feedback(review)
         return "fix_feedback"
 
