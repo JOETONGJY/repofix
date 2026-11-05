@@ -15,6 +15,9 @@ from repofix.contracts import (
     ExecutionStatus,
     FailureLayer,
     ModelRequest,
+    PatchStatus,
+    ReviewReport,
+    ReviewRequest,
     RunConfig,
     RunResult,
     RunStatus,
@@ -69,11 +72,9 @@ class AgentRunner:
         patch_hash_provider: Callable[[], str] | None = None,
         preflight_summary: dict | None = None,
         target_unchanged: Callable[[ToolCall], bool] | None = None,
+        review_runner_factory: Callable[[str], "object"] | None = None,
+        reviewer_executor: object | None = None,
     ):
-        if config.review_enabled:
-            raise NotImplementedError(
-                "Review Agent path arrives in M4; M1 runs with review_enabled=False only"
-            )
         self._run_id = run_id
         self._task = task
         self._config = config
@@ -105,10 +106,15 @@ class AgentRunner:
         )
         self._patch_hash_provider = patch_hash_provider
         self._preflight_summary = preflight_summary
+        # M4：Review Agent（review_enabled=True 时由 Runner 在 REVIEWING 阶段调度）
+        self._review_runner_factory = review_runner_factory
+        self._reviewer_executor = reviewer_executor
         self._state_machine = StateMachine()
         self._working_state = WorkingState(run_id=run_id)
         self._step = 0
         self._verification_status = VerificationStatus.NOT_RUN
+        self._review_status: str | None = None
+        self._reviewed_patch_hash: str | None = None
         self._token_usage: dict = {"prompt": 0, "completion": 0, "total": 0}
 
     # ---- 主循环 ----
@@ -225,6 +231,19 @@ class AgentRunner:
             if outcome.control_tool == FINISH_TOOL:
                 self._record_control_action(outcome)
                 finish_outcome = self._handle_finish()
+                if finish_outcome == "review":
+                    # M4：固定审查阶段（最多一轮；修正后再次 VERIFYING 不触发 Review）
+                    self._review_done = True
+                    stage = self._run_review_stage(
+                        f"verification: {self._verification_status.value}"
+                    )
+                    if isinstance(stage, RunStatus):
+                        return self._finish(
+                            stage,
+                            "finish_accepted",
+                            verification_status=self._verification_status,
+                        )
+                    continue  # "fix_feedback"：修正预算内回流
                 if finish_outcome == "accepted":
                     return self._finish(
                         RunStatus.COMPLETED,
@@ -307,8 +326,7 @@ class AgentRunner:
     def _handle_finish(self) -> str:
         """finish 提交 → VERIFYING → Final Verification。
 
-        返回 "accepted"（Run 可正常结束）/ "error"（验证环境或组件错误，Run 终止为
-        FAILED）/ "feedback"（断言失败，反馈回流继续修复）。
+        返回 "accepted" / "error" / "feedback" / "review"（M4：进入审查阶段）。
         """
         self._transition(RunStatus.VERIFYING)
         report = self._run_verification()
@@ -317,10 +335,14 @@ class AgentRunner:
         )
         if report.outcome is VerificationOutcome.PASSED:
             self._verification_status = VerificationStatus.PASSED
+            if self._should_review(report):
+                return "review"
             return "accepted"
         if report.outcome is VerificationOutcome.INCONCLUSIVE:
             # 无可用测试 ≠ 验证失败：不能宣称验证通过，允许正常完成（VF-05）
             self._verification_status = VerificationStatus.INCONCLUSIVE
+            if self._should_review(report):
+                return "review"  # 无可用测试但 Patch 合法：仍审查（design/02 触发表）
             return "accepted"
         if report.outcome is VerificationOutcome.ERROR:
             # 不可恢复错误：终止任务，不重验，不当作正常完成（design/08 V1.1）
@@ -333,6 +355,72 @@ class AgentRunner:
         self._working_state.failed_tests = list(report.failed_tests)
         self._working_state.updated_at_step = self._step
         return "feedback"
+
+    def _should_review(self, report: VerificationReport) -> bool:
+        """RV-01 触发规则：review_enabled + 已装配 Reviewer + 有效候选 Patch。
+        第二次 VERIFYING 由 _review_done 标志保证不再触发（RV-04）。"""
+        return (
+            self._config.review_enabled
+            and self._review_runner_factory is not None
+            and report.patch_status is not PatchStatus.EMPTY
+            and not getattr(self, "_review_done", False)
+        )
+
+    def _patch_hash_provider_full(self) -> dict:
+        """REVIEWING 阶段获取候选 Diff 与版本（provider 只回 hash 时的退化处理）。"""
+        executor = getattr(getattr(self._scheduler, "_dispatcher", None), "_executor", None)
+        if executor is not None and hasattr(executor, "get_changes"):
+            return executor.get_changes()
+        provider = self._patch_hash_provider
+        return {"diff": "", "patch_hash": provider() if provider else ""}
+
+    def _run_review_stage(self, verification_summary: str):
+        """REVIEWING 阶段（M4）：最多一轮审查 + 一次受限修正，第二次 VERIFYING 不再触发 Review。
+
+        返回 RunStatus（终态）或 "fix_feedback"（修正预算内回流继续修复）。
+        """
+        self._transition(RunStatus.REVIEWING)
+        review_runner = self._review_runner_factory(self._run_id)
+
+        candidate_diff = ""
+        patch_hash = ""
+        review = None
+        try:
+            changes = self._patch_hash_provider_full()
+            candidate_diff, patch_hash = changes["diff"], changes["patch_hash"]
+        except Exception as exc:  # noqa: BLE001 —— 工作区不可读 → 审查无法进行
+            review = ReviewReport(status="INCONCLUSIVE", patch_hash="",
+                                  summary=f"workspace diff unavailable: {exc}")
+        if review is None:
+            review = review_runner.review(ReviewRequest(
+                run_id=self._run_id,
+                instruction=self._task.instruction,
+                base_commit=self._task.base_commit,
+                candidate_diff=candidate_diff,
+                verification_summary=verification_summary,
+                workspace_ref=self._run_id,
+                patch_hash=patch_hash,
+            ))
+
+        self._review_status = review.status
+        self._reviewed_patch_hash = review.patch_hash or patch_hash
+        self._append_event(EventType.REVIEW_FINISHED, {
+            "status": review.status,
+            "findings": len(review.findings),
+            "patch_hash": self._reviewed_patch_hash,
+        })
+
+        if review.status == "APPROVED":
+            return RunStatus.COMPLETED
+        if review.status == "INCONCLUSIVE":
+            # RV-06：审查不可用/无法结论——保留确定性验证结果，正常完成并标记审查未完成
+            return RunStatus.COMPLETED
+
+        # FINDINGS：一次受限修正，反馈回流；修正预算经 Main 正常计数，
+        # 修正后再次 VERIFYING 不再触发 Review（RV-04）
+        self._transition(RunStatus.RUNNING)
+        self._context.record_findings_feedback(review)
+        return "fix_feedback"
 
     def _run_verification(self) -> VerificationReport:
         candidate_revision = ""
@@ -434,6 +522,8 @@ class AgentRunner:
             tool_calls=self._budget.tool_calls,
             token_usage=dict(self._token_usage),
             duration_ms=int(self._budget.elapsed_seconds() * 1000),
+            review_status=self._review_status,
+            reviewed_patch_hash=self._reviewed_patch_hash,
         )
 
     def _transition(self, target: RunStatus) -> None:

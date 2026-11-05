@@ -222,6 +222,24 @@ class ContextBuilder:
             ("note", {"role": "user", "content": f"Protocol error: {detail} Respond with tool calls or finish."})
         )
 
+    def record_findings_feedback(self, review) -> None:
+        """审查 FINDINGS 反馈（RV-04）：结构化意见回流 Main 修正。"""
+        lines = [f"Review Agent returned FINDINGS ({len(review.findings)}):"]
+        for finding in review.findings:
+            location = f"{finding.file_path}" + (f":{finding.line}" if finding.line else "")
+            lines.append(f"- [{finding.severity}] {location}: {finding.reason}")
+            if finding.suggested_fix:
+                lines.append(f"  suggested fix: {finding.suggested_fix}")
+        if review.summary:
+            lines.append(f"Reviewer summary: {review.summary}")
+        lines.append(
+            "Address the findings or explain why they do not apply (in your finish summary), "
+            "then submit finish again. The patch will be re-verified."
+        )
+        self._entries.append(
+            ("note", {"role": "user", "content": chr(10).join(lines)})
+        )
+
     def record_verification_feedback(self, report) -> None:
         self._entries.append(("note", {"role": "user", "content": render_verification_feedback(report)}))
 

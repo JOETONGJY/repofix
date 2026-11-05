@@ -161,6 +161,20 @@ class DockerWorkspace:
         """Scheduler 在持久化后取走全量输出（stdout, stderr）。"""
         return self._full_outputs.pop(call_id, None)
 
+    def read_only_executor(self) -> "DockerWorkspace":
+        """Reviewer 只读视图（design/05：同一候选副本、写权限被 Workspace 层拒绝）。
+
+        返回共享容器与副本的 read_only 工作区——apply_patch / run_command 在
+        Workspace 层被 PERMISSION_DENIED 拒绝（M4 RV-02）。
+        """
+        readonly = DockerWorkspace(
+            self.task_dir, self.run_id, base_commit=self.base_commit,
+            cli=self._cli, container_name=self.container_name,
+            read_only=True, command_timeout_seconds=self._command_timeout,
+        )
+        readonly._container_up = self._container_up  # noqa: SL001 —— 同进程受控共享
+        return readonly
+
     # ---- 五个工作区工具 ----
 
     def list_files(self, path: str = ".", max_depth: int = 3, limit: int = 100) -> ToolResult:

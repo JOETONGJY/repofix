@@ -138,6 +138,18 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
             return False
         return True
 
+    def review_runner_factory(review_run_id: str):
+        # 延迟引用：factory 在 REVIEWING 阶段才被调用（runner 已构造）
+        from repofix.runtime.review_runner import ReviewRunner
+
+        return ReviewRunner(
+            run_id=review_run_id, config=config,
+            model_client=adapter, registry=registry,
+            workspace_executor=workspace.read_only_executor(),
+            store=store, clock=SystemClock(),
+            global_tool_budget=runner.budget,
+        )
+
     runner = AgentRunner(
         run_id=run_id, task=task_spec, config=config,
         model_client=adapter, registry=registry,
@@ -150,6 +162,8 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
             "baseline_kind": report.baseline.get("kind"),
         },
         target_unchanged=workspace_unchanged,
+        review_runner_factory=review_runner_factory,
+        reviewer_executor=workspace.read_only_executor(),
     )
     # 每次真实 API 尝试（含 Gateway 内部重试）原子检查并占用预算（评审 P0-2）
     adapter.on_attempt = runner.budget.reserve_model_attempt
