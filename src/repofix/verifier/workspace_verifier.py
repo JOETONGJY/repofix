@@ -80,10 +80,10 @@ class WorkspaceVerifier:
         diff = changes["diff"]
         patch_status = PatchStatus.VALID if diff.strip() else PatchStatus.EMPTY
 
-        # 验证前一致性：请求携带的候选版本与工作区不符 → 旧验证失效（VF-06 前置）
-        if (request.candidate_revision
-                and request.candidate_revision != patch_hash
-                and not request.candidate_revision.startswith(("m1-", "m2-", "m3-"))):
+        # 验证前一致性：Runtime 提交的候选版本必须与工作区实际 Patch 一致（VF-06 前置；
+        # 评审 P0-3：M1/M2/M3 占位前缀豁免已删除——非空 candidate_revision 一律严格比对，
+        # Runtime 未提供（空串）时跳过比对，由 Verifier 自身的漂移检查兜底）
+        if request.candidate_revision and request.candidate_revision != patch_hash:
             return self._error(request, VerificationAttribution.UNDETERMINABLE,
                                "candidate_revision mismatch before verification; stale report")
 

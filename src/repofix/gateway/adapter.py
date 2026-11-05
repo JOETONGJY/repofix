@@ -26,6 +26,17 @@ from repofix.gateway.transport import HttpTransport, TransportError, UrllibHttpT
 _RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 _PERMANENT_STATUSES = {400, 401, 403, 404, 422}
 
+# 已验证模型的上下文窗口（design/07：B_context 必须是"明确声明并验证"的容量；
+# 未知模型不虚构容量——resolve 返回 None，需调用方显式配置）。数值以官方文档校准为准。
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "deepseek-flash": 131072,  # 128K
+    "deepseek-v4-pro": 131072,  # 128K
+}
+
+
+def resolve_context_window(model_id: str) -> int | None:
+    return MODEL_CONTEXT_WINDOWS.get(model_id)
+
 
 class DeepSeekAdapter:
     """实现 ModelClient 协议。counts_own_attempts 标记：Runner 不再预计数首次调用。"""
@@ -41,6 +52,7 @@ class DeepSeekAdapter:
         on_attempt=None,
         sleep=time.sleep,
         retry_limit: int = 2,
+        thinking: str | None = "disabled",
     ):
         if transport is None:
             if not api_key:
@@ -50,6 +62,7 @@ class DeepSeekAdapter:
         self.on_attempt = on_attempt  # 公开可写：Runner 组装后注入预算计数钩子
         self._sleep = sleep
         self._retry_limit = retry_limit
+        self._thinking = thinking  # None = 不发送该字段（未知兼容行为时由调用方决定）
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         payload = self._build_payload(request)
@@ -90,6 +103,9 @@ class DeepSeekAdapter:
             "messages": [dict(message) for message in request.messages],
             "stream": False,
         }
+        if self._thinking is not None:
+            # DeepSeek 默认开启 Thinking Mode——显式关闭以固定协议行为（design/03）
+            payload["thinking"] = {"type": self._thinking}
         if request.tools:
             payload["tools"] = [dict(tool) for tool in request.tools]
         if request.max_output_tokens is not None:

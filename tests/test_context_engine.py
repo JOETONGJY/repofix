@@ -11,9 +11,11 @@ from repofix.context import (
 )
 from repofix.context.tokens import available_input_tokens
 from repofix.contracts import (
+    AgentActor,
     EventType,
     ExecutionStatus,
     FailureLayer,
+    ModelRequest,
     ModelResponse,
     PatchStatus,
     RunConfig,
@@ -26,7 +28,35 @@ from repofix.contracts import (
     VerificationReport,
     WorkingState,
 )
-from tests.conftest import FakeClock, make_tool_call, model_response
+from repofix.gateway.transport import TransportResult
+from tests.conftest import (
+    FakeClock,
+    FakeToolExecutor,
+    FakeVerifier,
+    ScriptedModelClient,
+    make_tool_call,
+    model_response,
+)
+
+TASK_ARGS = {"instruction": "Fix the login validation bug", "repo_path": "./repo", "base_commit": "abc123"}
+
+def passed_report():
+    from repofix.contracts import PatchStatus, VerificationOutcome, VerificationReport
+    from repofix.contracts import TestStatus as _TS
+    return VerificationReport(candidate_revision="v", patch_status=PatchStatus.VALID,
+                              test_status=_TS.PASSED, outcome=VerificationOutcome.PASSED)
+
+class FakeTransportLocal:
+    def __init__(self, script):
+        self._script = list(script)
+        self.calls = []
+
+    def post(self, path, payload, timeout):
+        self.calls.append(payload)
+        item = self._script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 def build_builder(**kwargs) -> ContextBuilder:
@@ -183,14 +213,14 @@ class TestCx04BudgetExceeded:
         from repofix.runtime.runner import AgentRunner
         from repofix.state import SQLiteEventStore
         from repofix.tools.dispatcher import ToolDispatcher
-        from tests.conftest import FakeToolExecutor, FakeVerifier, ScriptedModelClient
+        from tests.conftest import FakeToolExecutor, ScriptedModelClient
 
-        config = RunConfig(model_id="m", review_enabled=False,
-                           context_window_tokens=100, output_reserve_tokens=0)
+        cfg = RunConfig(model_id="m", review_enabled=False,
+                        context_window_tokens=100, output_reserve_tokens=0)
         big_task = TaskSpec(instruction="task " * 2000, repo_path="./repo", base_commit="abc123")
         store = SQLiteEventStore(":memory:")
         runner = AgentRunner(
-            run_id="run_cx04", task=big_task, config=config,
+            run_id="run_cx04", task=big_task, config=cfg,
             model_client=ScriptedModelClient([]), registry=registry,
             dispatcher=ToolDispatcher(registry, FakeToolExecutor()), store=store,
             verifier=FakeVerifier([]), clock=FakeClock(),
@@ -397,3 +427,104 @@ class TestM32ReviewRegressions:
         assert cmd_content.lstrip().startswith("[...context budget")  # 命令：严格配额 + 错误尾部
         assert len(cmd_content) < 200
         assert read_content.startswith("RRR")  # 不是命令输出的尾部策略
+
+
+class TestM3PolishWiring:
+    """M3 集成评审收尾：预算原子占用、真实候选版本、preflight 摘要接线。"""
+
+    def _runner(self, registry, responses, verifier, *, preflight_summary=None,
+                patch_hash_provider=None):
+        from repofix.runtime.runner import AgentRunner
+        from repofix.state import SQLiteEventStore
+        from repofix.tools.dispatcher import ToolDispatcher
+
+        store = SQLiteEventStore(":memory:")
+        runner = AgentRunner(
+            run_id="run_pf", task=TaskSpec(**TASK_ARGS),
+            config=RunConfig(model_id="m", review_enabled=False),
+            model_client=ScriptedModelClient(responses),
+            registry=registry, dispatcher=ToolDispatcher(registry, FakeToolExecutor()),
+            store=store, verifier=verifier, clock=FakeClock(),
+            preflight_summary=preflight_summary,
+            patch_hash_provider=patch_hash_provider,
+        )
+        return runner, store
+
+    def test_p02_reserve_blocks_gateway_retry_overrun(self):
+        """P0-2：预算只剩 1 次，429 后 Gateway 重试被原子占用拒绝。"""
+        from repofix.gateway import DeepSeekAdapter
+        from repofix.runtime.loop_guard import BudgetTracker, BudgetViolation
+
+        cfg = RunConfig(model_id="m", max_model_calls=2)
+        tracker = BudgetTracker(cfg, FakeClock())
+        tracker.count_model_call()  # 已用 1，剩 1
+
+        violations: list[str] = []
+
+        def hook():
+            try:
+                tracker.reserve_model_attempt()
+            except BudgetViolation as exc:
+                violations.append(exc.reason)
+                raise
+
+        ok_body = json.dumps({
+            "id": "r", "choices": [{"message": {"role": "assistant", "content": "ok"},
+                                    "finish_reason": "stop"}],
+        })
+        script = [
+            TransportResult(429, "limited"),
+            TransportResult(429, "limited"),
+            TransportResult(200, ok_body),
+        ]
+        adapter = DeepSeekAdapter(transport=FakeTransportLocal(script), on_attempt=hook,
+                                  sleep=lambda _s: None, retry_limit=2)
+        request = ModelRequest(actor=AgentActor.MAIN, model_id="m",
+                               messages=[{"role": "user", "content": "hi"}],
+                               tools=[], request_id="r")
+        # 钩子拒绝重试：BudgetViolation 直接传播（Runner 捕获后转 BUDGET_EXCEEDED）
+        from repofix.runtime.loop_guard import BudgetViolation as _BV
+
+        with pytest.raises(_BV):
+            adapter.complete(request)
+        assert violations == ["max_model_calls"]  # 第二次重试被预算拒绝
+        assert tracker.model_calls == 2  # 原子占用：不超上限
+
+    def test_p03_runner_uses_real_patch_hash_provider(self, registry):
+        """P0-3：Runner 经 provider 提交真实候选版本，不再使用 M1 占位。"""
+
+        seen: list[str] = []
+
+        class RecordingVerifier(FakeVerifier):
+            def verify(self, request):
+                seen.append(request.candidate_revision)
+                return super().verify(request)
+
+        responses = [model_response("d1", [make_tool_call("f1", "finish", summary="x")])]
+        runner, _ = self._runner(
+            registry, responses, RecordingVerifier([passed_report()]),
+            patch_hash_provider=lambda: "real" + "0" * 56,
+        )
+        result = runner.run()
+        assert result.runtime_status is RunStatus.COMPLETED
+        assert seen == ["real" + "0" * 56]  # 不再是 m1-no-workspace 占位
+
+    def test_preflight_summary_recorded_when_provided(self, registry):
+        """P1 遗留清理：传入真实摘要才记录 PREFLIGHT_COMPLETED；不传不发占位事件。"""
+
+        finish = [model_response("d1", [make_tool_call("f1", "finish", summary="x")])]
+        report = passed_report()
+
+        runner_with, store_with = self._runner(
+            registry, finish, FakeVerifier([report]),
+            preflight_summary={"steps": "ok"},
+        )
+        runner_with.run()
+        types_with = [e.type for e in store_with.get_events("run_pf")]
+        assert EventType.PREFLIGHT_COMPLETED in types_with
+
+        runner_without, store_without = self._runner(registry, finish, FakeVerifier([report]))
+        result = runner_without.run()
+        assert result.runtime_status is RunStatus.COMPLETED
+        types_without = [e.type for e in store_without.get_events("run_pf")]
+        assert EventType.PREFLIGHT_COMPLETED not in types_without

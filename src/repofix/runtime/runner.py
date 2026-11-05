@@ -5,6 +5,7 @@ finish 是 Runtime 控制动作，经 Final Verification 决定是否接受；
 所有执行均受配置预算限制；文本不是任务完成信号。
 """
 import uuid
+from collections.abc import Callable
 
 from repofix.context import ContextBudgetExceeded
 from repofix.context.builder import ContextBuilder
@@ -65,6 +66,9 @@ class AgentRunner:
         verifier: Verifier,
         clock: Clock,
         system_rules: str = DEFAULT_SYSTEM_RULES,
+        patch_hash_provider: Callable[[], str] | None = None,
+        preflight_summary: dict | None = None,
+        target_unchanged: Callable[[ToolCall], bool] | None = None,
     ):
         if config.review_enabled:
             raise NotImplementedError(
@@ -97,7 +101,10 @@ class AgentRunner:
         self._guard = NoProgressDetector(
             repeat_threshold=config.no_progress_repeat_threshold,
             terminate_threshold=config.no_progress_terminate_threshold,
+            target_unchanged=target_unchanged,  # None = M1 保守默认（视为未变化）
         )
+        self._patch_hash_provider = patch_hash_provider
+        self._preflight_summary = preflight_summary
         self._state_machine = StateMachine()
         self._working_state = WorkingState(run_id=run_id)
         self._step = 0
@@ -117,8 +124,10 @@ class AgentRunner:
         )
         self._append_event(EventType.RUN_STARTED, {"task": self._task.instruction[:200]})
         self._transition(RunStatus.PREPARING)
-        # M2 起由 WorkspaceManager 执行真实 Preflight（Clone / 容器 / 依赖 / 基线测试）
-        self._append_event(EventType.PREFLIGHT_COMPLETED, {"mode": "m1_no_workspace"})
+        # 真实 Preflight 由 CLI/WorkspaceManager 在 Runner 之前执行；
+        # 此处只记录传入的真实摘要，不再发 M1 占位事件（评审遗留清理）
+        if self._preflight_summary is not None:
+            self._append_event(EventType.PREFLIGHT_COMPLETED, dict(self._preflight_summary))
         self._transition(RunStatus.RUNNING)
         self._context.start_task(self._task.instruction, self._task.base_commit)
 
@@ -144,6 +153,11 @@ class AgentRunner:
                     RunStatus.FAILED,
                     "context_budget_exceeded",
                     fail_layer=FailureLayer.TOOL_SYSTEM,
+                )
+            except BudgetViolation as violation:
+                # Gateway 重试钩子（reserve_model_attempt）触顶：不丢失 RunResult（评审 P0-2）
+                return self._finish(
+                    RunStatus.BUDGET_EXCEEDED, f"budget_exhausted:{violation.reason}"
                 )
             except ModelProtocolError as exc:
                 # Gateway 层协议错误（截断 / call_id 丢失或重复 / 结构损坏）：
@@ -321,11 +335,14 @@ class AgentRunner:
         return "feedback"
 
     def _run_verification(self) -> VerificationReport:
+        candidate_revision = ""
+        if self._patch_hash_provider is not None:
+            candidate_revision = self._patch_hash_provider()  # 真实 Workspace 统一函数（CONS-03）
         request = VerificationRequest(
             run_id=self._run_id,
-            workspace_ref="m1-no-workspace",  # M2/M3 替换为真实 WorkspaceHandle
+            workspace_ref=self._run_id,
             base_commit=self._task.base_commit,
-            candidate_revision="m1-no-workspace",  # M3 接 patch_hash 统一生成函数
+            candidate_revision=candidate_revision,
             test_plan=[self._task.test_command] if self._task.test_command else [],
             baseline_result={},
             timeout_seconds=self._config.command_timeout_seconds,

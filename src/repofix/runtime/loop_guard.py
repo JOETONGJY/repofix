@@ -78,6 +78,16 @@ class BudgetTracker:
         if usage:
             self._accumulate_tokens(usage)
 
+    def reserve_model_attempt(self) -> None:
+        """原子语义：每次真实 API 请求发出前检查并占用预算（评审 P0-2）。
+
+        Gateway 的内部重试每次都调用本方法——预算只剩 1 次时遇到 429，
+        不会再发出额外请求。触顶抛 BudgetViolation（Runner 转 BUDGET_EXCEEDED）。
+        """
+        if self.model_calls >= self._config.max_model_calls:
+            raise BudgetViolation("max_model_calls")
+        self.model_calls += 1
+
     def record_usage(self, usage: dict | None = None) -> None:
         """成功响应后记录 Token 用量（与尝试计数分离；缺失时标记未知，不虚构）。"""
         if usage:

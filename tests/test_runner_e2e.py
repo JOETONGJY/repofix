@@ -116,7 +116,8 @@ class TestVerticalSlice:
         # 事件序列完整（specs/02 单 Turn 标准序列）
         event_types = [event.type for event in store.get_events(RUN_ID)]
         assert event_types[0] is EventType.RUN_STARTED
-        assert EventType.PREFLIGHT_COMPLETED in event_types
+        # 真实 Preflight 由 CLI 执行并经 preflight_summary 注入；M1 环境不发占位事件
+        assert EventType.PREFLIGHT_COMPLETED not in event_types
         assert event_types.count(EventType.MODEL_REQUESTED) == 3
         assert event_types.count(EventType.TOOL_FINISHED) == 4  # 3 个工具 + 1 个控制动作
         assert event_types.count(EventType.VERIFICATION_FINISHED) == 1

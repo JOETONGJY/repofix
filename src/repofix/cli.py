@@ -118,19 +118,46 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         timeout_seconds=config.command_timeout_seconds,
     )
     store = SQLiteEventStore(Path(config.output_dir) / "runs" / run_id / "run.sqlite")
-    adapter = DeepSeekAdapter(api_key=api_key, retry_limit=config.model_retry_limit)
+    adapter = DeepSeekAdapter(
+        api_key=api_key, retry_limit=config.model_retry_limit,
+        thinking="disabled",  # 显式关闭 Thinking Mode（评审 P1；与演练声明一致）
+    )
+    # LoopGuard 真实目标变化判定：工作区 patch_hash 变化 = 有进展（评审 P1 遗留接线）
+    progress_state = {"last_hash": None}
+
+    def workspace_unchanged(call) -> bool:
+        try:
+            current = workspace.get_changes()["patch_hash"]
+        except WorkspaceError:
+            return True  # 无法确认 → 保守视为未变化
+        if progress_state["last_hash"] is None:
+            progress_state["last_hash"] = current
+            return False  # 首次观察：工作区状态本身就是进展
+        if current != progress_state["last_hash"]:
+            progress_state["last_hash"] = current
+            return False
+        return True
+
     runner = AgentRunner(
         run_id=run_id, task=task_spec, config=config,
         model_client=adapter, registry=registry,
         dispatcher=ToolDispatcher(registry, workspace),
         store=store, verifier=verifier, clock=SystemClock(),
+        patch_hash_provider=lambda: workspace.get_changes()["patch_hash"],  # 评审 P0-3
+        preflight_summary={
+            "steps": "ok",
+            "test_plan": report.test_plan,
+            "baseline_kind": report.baseline.get("kind"),
+        },
+        target_unchanged=workspace_unchanged,
     )
-    # 每次真实 API 尝试（含失败与重试）计入 Runner 预算（specs/02 V0.2）
-    adapter.on_attempt = runner.budget.count_model_call
+    # 每次真实 API 尝试（含 Gateway 内部重试）原子检查并占用预算（评审 P0-2）
+    adapter.on_attempt = runner.budget.reserve_model_attempt
     return runner, store, workspace, manager, handle, report
 
 
-def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result) -> Path:
+def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result) -> tuple[Path, str | None]:
+    delivery_error: str | None = None
     run_dir = Path(output_dir) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -151,7 +178,7 @@ def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result) ->
         json.dumps({"verification": verification}, ensure_ascii=False, indent=2),
         encoding="utf-8", newline="\n",
     )
-    return run_dir
+    return run_dir, delivery_error
 
 
 def _exit_code_for(result) -> int:
@@ -228,20 +255,24 @@ def run(
             model_calls=0, tool_calls=0, token_usage={}, duration_ms=0,
         )
 
-    run_dir = _write_artifacts(output_dir, run_id, store, workspace, result)
-    manager.cleanup_workspace(handle, keep_for_diagnosis=(
-        result.runtime_status is not RunStatus.COMPLETED or interrupted
-    ))
+    run_dir, delivery_error = _write_artifacts(output_dir, run_id, store, workspace, result)
+    # 清理顺序（评审 P1）：先停容器（进程树），再清理副本目录
     try:
         workspace.close()
     except Exception:  # noqa: BLE001 —— 清理失败不改变退出码
         pass
+    finally:
+        manager.cleanup_workspace(handle, keep_for_diagnosis=(
+            result.runtime_status is not RunStatus.COMPLETED or interrupted
+        ))
 
     typer.echo(f"  status: {result.runtime_status.value}  verification: {result.verification_status.value}")
     typer.echo(f"  modified: {len(result.modified_files)} file(s)  model calls: {result.model_calls}")
     typer.echo(f"  artifacts: {run_dir}")
     if result.termination_reason:
         typer.echo(f"  termination: {result.termination_reason}")
+    if delivery_error:
+        typer.echo(f"  [delivery error] {delivery_error}", err=True)
 
     if interrupted:
         raise typer.Exit(130)
