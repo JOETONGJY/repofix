@@ -1,0 +1,53 @@
+# Experiment G：单 Agent vs 双 Agent vs 预算匹配对照报告
+
+- 日期：2026-11-06
+- 模型：deepseek-flash（Non-thinking，thinking 显式 disabled）
+- RepoFix 版本：c74401e + 边界修复（fdb6d0e）
+- 仓库：合成 Bug 仓库 ×2（slugify 空白处理 / clamp 边界颠倒），隔离副本 + Docker 沙箱
+- Token 消耗：总计 73,294（全部真实 DeepSeek API 调用）
+
+## 三组配置
+
+| 组 | 配置 | 任务 |
+| --- | --- | --- |
+| A | 单 Agent Baseline（--no-review） | slugify + clamp |
+| B | 双 Agent（--review，Reviewer 3 轮/8 只读工具独立预算） | 同上 |
+| bm | 预算匹配单 Agent（max_model_calls=13 = B 组实际消耗） | 同上 |
+
+## 结果
+
+| Group | Task | Status | Verify | Review | Calls | Tokens |
+|---|---|---|---|---|---|---|
+| A | slugify | completed | passed | - | 6 | 11,162 |
+| A | clamp | completed | passed | - | 6 | 11,613 |
+| B | slugify | completed | passed | APPROVED | 7 | 14,072 |
+| B | clamp | completed | passed | INCONCLUSIVE | 6 | 11,052 |
+| BM | slugify | completed | passed | - | 6 | 11,289 |
+| BM | clamp | completed | passed | - | 7 | 14,106 |
+
+**汇总**：A = 2/2 成功、22,775 tokens；B = 2/2 成功、25,124 tokens（**+10.3%**）；BM = 2/2 成功、25,395 tokens。三组独立验收（可见测试）全部通过。
+
+## 结论（如实，基于小样本 n=2/组）
+
+1. **简单任务上三组成功率相同（2/2）**——Reviewer 没有带来额外修复收益，也没有造成损失。
+2. **双 Agent 成本 +10.3%**（Review 轮的额外模型调用与 Token），来自 Reviewer 探索 + 结论提交。
+3. **Reviewer Finding 表现**：1 次 APPROVED（绑定 patch_hash）、1 次 INCONCLUSIVE（Reviewer 3 轮预算内完成探索但未提交结论——预算感知 Prompt 的一个改进方向）。零误报 FINDINGS。
+4. **预算语义验证**：组 B clamp 的 Reviewer INCONCLUSIVE 恰好证明 Reviewer 独立预算（3 轮）在不阻断主任务的前提下正确截断（RV-05/RV-06）。
+5. **样本量声明**：n=2/组不足以推广到复杂任务；本实验验证的是**评测器与三组对照流程端到端可用**，扩展到 20–30 任务后的数据才有统计意义（design/09 的既定立场）。
+
+## 回答核心问题（design/09）
+
+> 独立审查是否比单纯增加推理预算更有价值？
+
+**在简单修复任务上：当前无差异，双 Agent 多花 10% Token。** 这不是 Reviewer 无价值的最终结论——简单任务本就难以暴露审查价值——但它客观量化了成本，并验证了评测框架能回答这个问题。扩展任务集后的对照实验可直接复用本流程。
+
+## 复现
+
+```bash
+# 每组按 plan.md/README 的 Quick Start 构建 repofix-env 镜像后：
+repofix run --repo <repo> --task "<task>" --test-command "python -m pytest -q --tb=no -rf" \
+  --output-dir repofix-data/experiment-g/group-a --max-model-calls 6    # 组 A
+# 组 B 加 --review；组 bm 用 --max-model-calls 13
+```
+
+完整 Trace：`repofix-data/experiment-g/group-{a,b,bm}/runs/<run_id>/`（trajectory.jsonl / result.json / changes.patch / test-report.json）。

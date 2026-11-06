@@ -261,8 +261,8 @@ repofix/
 | **M1** | 真实 Contracts / Runtime / 调度 / SQLite + Scripted 外部能力 | ✅ 完成（含集成评审修订：权限优先校验、双层输出截断、验证错误语义、请求预算计数；100 项测试） |
 | **M2** | 真实 Git 副本 + Docker 沙箱 + 六工具 + Preflight + Patch 导出 | ✅ 完成（143 项测试含 11 项 Docker 集成；容器约束实测；全链路演练通过；Patch 独立应用验证通过） |
 | **M3** | DeepSeek 接入 + Context Engine + Task CLI + 真实 Verifier，第一次真实修复 | ✅ 完成（含集成收尾修订；首次真实修复 COMPLETED+PASSED，独立验收 SUCCESS） |
-| **M4** | Read-only Review Agent 与反馈闭环 | ✅ 完成（ReviewRunner 独立循环 + 只读双保险 + 独立预算 + FINDINGS 反馈闭环；RV-01~07 全覆盖） |
-| **M5** | 隐藏验收、指标统计与对照实验 | 未开始 |
+| **M4** | Read-only Review Agent 与反馈闭环 | ✅ 完成（三轮评审修订 + 真实双 Agent Trace：2×APPROVED + 预算语义样本） |
+| **M5** | Evaluation Harness（独立验收 + 三层指标 + Experiment G 对照） | ✅ 核心完成（EV-01~05 + Experiment G 首轮对照：三组 2/2 成功，双 Agent +10.3% tokens，详见 docs/EXPERIMENT-G.md） |
 
 诚实的进度声明：项目已有完整的设计文档体系与经过测试的 Harness 实现（Runtime 协议、工具系统、隔离工作区均可运行验证），但**尚未产生真实模型修复成功率、Reviewer 提升幅度等实测数据**——这些在 M3–M5 完成后由实验给出，不预先声称。
 
