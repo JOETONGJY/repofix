@@ -36,7 +36,12 @@ app = FastAPI(title="RepoFix", docs_url=None, redoc_url=None)
 
 @dataclass
 class RunHandle:
-    """一次 Web Run 的内存状态（GIL 下引用读写安全；完成标志用 Event）。"""
+    """一次 Web Run 的内存状态。
+
+    生命周期（评审收尾）：Run 结束后延迟释放重资源（SQLite 连接/容器引用），
+    RunHandle 本体保留轻量元数据（result/artifacts_dir）供结果查询；
+    历史产物以 repofix-data/ 下文件为准，不依赖内存对象永久存活。
+    """
 
     run_id: str
     status: str = "running"  # running / completed / failed / budget_exceeded / error
@@ -72,6 +77,28 @@ class StartRequest(BaseModel):
     review: bool = False
 
 
+_RUN_RETENTION_SECONDS = 600  # Run 结束后保留轻量元数据 10 分钟，随后释放重资源
+
+
+def _release_run_resources(run: "RunHandle") -> None:
+    """延迟释放：关闭 SQLite 连接、清空容器/Manager 引用（评审 P1 生命周期治理）。"""
+    if run.store is not None:
+        try:
+            run.store.close()
+        except Exception:  # noqa: BLE001
+            pass
+        run.store = None
+    run.workspace = None
+    run.manager = None
+    run.handle = None
+
+
+def _schedule_release(run: "RunHandle") -> None:
+    timer = threading.Timer(_RUN_RETENTION_SECONDS, _release_run_resources, args=(run,))
+    timer.daemon = True
+    timer.start()
+
+
 def _finish_run(run: RunHandle, result, artifacts_dir: str = "") -> None:
     run.result = result
     run.artifacts_dir = artifacts_dir
@@ -85,6 +112,7 @@ def _finish_run(run: RunHandle, result, artifacts_dir: str = "") -> None:
     else:
         run.status = "failed"
     run.done.set()
+    _schedule_release(run)
 
 
 def _run_worker(run: RunHandle, task_spec, config) -> None:
