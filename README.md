@@ -197,6 +197,15 @@ CLI 接收任务 + 仓库 + 运行配置
 
 ## 快速开始
 
+### Web 界面（Codex 风格，可选）
+
+```bash
+pip install -e ".[server]"        # 安装 FastAPI / uvicorn
+uvicorn repofix.server:app --port 8000
+# 浏览器打开 http://127.0.0.1:8000 —— 输入仓库路径与任务描述，
+# 实时查看执行事件流（模型/工具/验证），完成后展示 Patch 与统计。
+```
+
 环境要求：Python 3.11+、Git；运行集成测试与全链路演练需要 Docker Desktop（Linux 优先，Windows 建议 WSL2 后端）。
 
 ```bash

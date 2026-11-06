@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RepoFix — Coding Agent</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --fg: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: var(--mono); font-size: 14px; line-height: 1.6;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  header h1 { font-size: 16px; margin: 0; color: var(--accent); font-weight: 600; }
+  header span { color: var(--dim); font-size: 12px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px; margin-bottom: 16px;
+  }
+  label { display: block; color: var(--dim); font-size: 12px; margin: 10px 0 4px; }
+  input[type=text], textarea {
+    width: 100%; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px 10px; font-family: var(--mono); font-size: 13px;
+  }
+  textarea { min-height: 72px; resize: vertical; }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button {
+    margin-top: 14px; background: #238636; color: #fff; border: none;
+    border-radius: 6px; padding: 8px 20px; font-family: var(--mono);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { background: #1f6feb40; color: var(--dim); cursor: not-allowed; }
+  button:hover:not(:disabled) { background: #2ea043; }
+  .status-line { margin-top: 12px; color: var(--dim); font-size: 12px; min-height: 18px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.run { background: var(--yellow); animation: pulse 1.2s infinite; }
+  .dot.ok { background: var(--green); }
+  .dot.err { background: var(--red); }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+  /* 事件流 */
+  #stream {
+    background: #010409; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 16px; min-height: 200px; max-height: 480px;
+    overflow-y: auto; font-size: 13px; white-space: pre-wrap;
+  }
+  .ev { padding: 1px 0; }
+  .ev .seq { color: #484f58; }
+  .ev .tag { display: inline-block; min-width: 150px; font-weight: 600; }
+  .tag.model_requested, .tag.model_responded { color: var(--accent); }
+  .tag.tool_started, .tag.tool_finished { color: var(--purple); }
+  .tag.verification_finished { color: var(--yellow); }
+  .tag.run_finished, .tag.review_finished { color: var(--green); }
+  .tag.preflight_completed { color: var(--green); }
+  .ev .detail { color: var(--dim); }
+  .ev .actor-reviewer { color: var(--purple); }
+  /* 结果卡片 */
+  #result { display: none; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; }
+  .stat .k { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .v.ok { color: var(--green); } .v.bad { color: var(--red); }
+  pre#patch {
+    background: #010409; border: 1px solid var(--border); border-radius: 4px;
+    padding: 12px; overflow-x: auto; font-size: 12px; max-height: 320px; overflow-y: auto;
+  }
+  .add { color: var(--green); } .del { color: var(--red); }
+  a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RepoFix</h1>
+  <span>Repository-Aware Coding Agent Harness</span>
+</header>
+<div class="wrap">
+  <div class="panel">
+    <label>仓库路径</label>
+    <input type="text" id="repo" placeholder=".\demo-repo">
+    <label>任务描述</label>
+    <textarea id="task" placeholder="Fix the password validation bug in auth.py ..."></textarea>
+    <div class="row">
+      <div>
+        <label>验证命令</label>
+        <input type="text" id="testcmd" value="python -m pytest -q --tb=no -rf">
+      </div>
+      <div>
+        <label>模型调用上限</label>
+        <input type="text" id="maxcalls" value="6">
+      </div>
+      <div>
+        <label>审查 Agent</label>
+        <input type="text" id="review" value="off" placeholder="on / off">
+      </div>
+    </div>
+    <button id="btn" onclick="startRun()">▶ 运行</button>
+    <div class="status-line" id="statusline"></div>
+  </div>
+
+  <div class="panel" id="streamPanel" style="display:none">
+    <label>执行事件流</label>
+    <div id="stream"></div>
+  </div>
+
+  <div class="panel" id="result">
+    <label>运行结果</label>
+    <div class="grid" id="stats"></div>
+    <label style="margin-top:14px">changes.patch</label>
+    <pre id="patch"></pre>
+  </div>
+</div>
+
+<script>
+const TAGS = {
+  run_started: "run started", preflight_completed: "preflight ✓",
+  model_requested: "→ model", model_responded: "← model",
+  model_retry: "model retry",
+  tool_started: "tool started", tool_finished: "tool finished",
+  verification_finished: "verification", review_started: "review started",
+  review_finished: "review finished", run_finished: "run finished",
+};
+function el(id) { return document.getElementById(id); }
+function setStatus(cls, text) {
+  el("statusline").innerHTML = `<span class="dot ${cls}"></span>${text}`;
+}
+function summarize(payload) {
+  if (payload.tool_name) {
+    const rc = payload.exit_code !== undefined && payload.exit_code !== null ? ` exit=${payload.exit_code}` : "";
+    const st = payload.status ? ` [${payload.status}]` : "";
+    return `${payload.tool_name}${rc}${st}`;
+  }
+  if (payload.status) return payload.status;
+  if (payload.termination_reason) return payload.termination_reason;
+  if (payload.detail) return payload.detail;
+  return "";
+}
+function renderEvent(ev) {
+  const tag = TAGS[ev.type] || ev.type;
+  const actor = ev.actor === "reviewer" ? " reviewer" : "";
+  const detail = summarize(ev.payload);
+  const div = document.createElement("div");
+  div.className = "ev";
+  div.innerHTML =
+    `<span class="seq">#${String(ev.seq).padStart(3, "0")}</span> `
+    + `<span class="tag ${ev.type}">${tag}</span>`
+    + `<span class="actor-reviewer">${actor}</span> `
+    + `<span class="detail">${detail}</span>`;
+  const box = el("stream");
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function startRun() {
+  const payload = {
+    repo: el("repo").value.trim(),
+    task: el("task").value.trim(),
+    test_command: el("testcmd").value.trim() || null,
+    max_model_calls: parseInt(el("maxcalls").value) || 6,
+    review: el("review").value.trim().toLowerCase() === "on",
+  };
+  if (!payload.repo || !payload.task) { setStatus("err", "仓库路径与任务描述为必填"); return; }
+  el("btn").disabled = true;
+  el("stream").innerHTML = "";
+  el("streamPanel").style.display = "";
+  el("result").style.display = "none";
+  setStatus("run", "启动 Run ...");
+  fetch("/api/runs", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(r => r.json()).then(start => {
+    setStatus("run", `Run ${start.run_id} 执行中 ...`);
+    subscribe(start.run_id);
+  }).catch(e => { setStatus("err", "启动失败: " + e); el("btn").disabled = false; });
+}
+function subscribe(runId) {
+  const es = new EventSource(`/api/runs/${runId}/events`);
+  es.onmessage = (msg) => {
+    const ev = JSON.parse(msg.data);
+    if (ev.type === "done") { es.close(); onDone(runId, ev); return; }
+    renderEvent(ev);
+    if (ev.type === "run_finished") {
+      setStatus("run", "生成结果 ...");
+    }
+  };
+  es.onerror = () => { es.close(); };
+}
+async function onDone(runId, doneEv) {
+  setStatus(doneEv.status === "completed" ? "ok" : "err",
+    doneEv.status === "completed" ? "运行完成" : ("运行结束: " + (doneEv.error || doneEv.status)));
+  const r = await fetch(`/api/runs/${runId}`).then(x => x.json());
+  el("btn").disabled = false;
+  if (!r.result) return;
+  const res = r.result;
+  const vOk = res.verification_status === "passed";
+  el("stats").innerHTML = `
+    <div class="stat"><div class="k">Runtime</div><div class="v ${res.runtime_status === 'completed' ? 'ok' : 'bad'}">${res.runtime_status}</div></div>
+    <div class="stat"><div class="k">验证</div><div class="v ${vOk ? 'ok' : 'bad'}">${res.verification_status}</div></div>
+    <div class="stat"><div class="k">修改文件</div><div class="v">${res.modified_files.length}</div></div>
+    <div class="stat"><div class="k">模型调用</div><div class="v">${res.model_calls}</div></div>
+    <div class="stat"><div class="k">工具调用</div><div class="v">${res.tool_calls}</div></div>
+    <div class="stat"><div class="k">Tokens</div><div class="v">${res.token_usage.total || 0}</div></div>
+    <div class="stat"><div class="k">Review</div><div class="v">${res.review_status || "-"}</div></div>`;
+  try {
+    const patch = await fetch(`/api/runs/${runId}/patch`).then(x => x.text());
+    el("patch").innerHTML = patch.split("\n").map(l => {
+      const cls = l.startsWith("+") ? "add" : (l.startsWith("-") ? "del" : "");
+      return `<span class="${cls}">${l.replace(/</g, "&lt;")}</span>\n`;
+    }).join("");
+  } catch (e) { el("patch").textContent = "(patch 不可用)"; }
+  el("result").style.display = "";
+}
+</script>
+</body>
+</html>

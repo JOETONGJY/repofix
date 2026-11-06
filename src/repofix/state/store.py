@@ -8,8 +8,10 @@
   SUCCEEDED / FAILED / UNKNOWN；不自动重放工具调用。
 - trajectory.jsonl 仅由导出产生，不参与状态判定。
 """
+import functools
 import json
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -81,6 +83,15 @@ class StoreWriteError(RuntimeError):
     """事件或工具状态持久化失败。Runtime 收到后不得继续新的写入操作。"""
 
 
+def _locked(fn):
+    """SQLite 跨线程串行化（Web：后台 Agent 线程写 + SSE 线程读）。"""
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+    return wrapper
+
+
 class SQLiteEventStore:
     """单一权威存储：运行状态与事件的权威来源（文件内容以 Workspace 为准）。"""
 
@@ -88,7 +99,9 @@ class SQLiteEventStore:
         path = Path(db_path) if str(db_path) != ":memory:" else None
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)  # 运行目录可能尚未创建
-        self._conn = sqlite3.connect(str(db_path), isolation_level=None)
+        self._conn = sqlite3.connect(str(db_path), isolation_level=None,
+                            check_same_thread=False)  # Web：后台写 + SSE 读跨线程
+        self._lock = threading.RLock()  # RLock：reconcile 内部互调不死锁
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
 
@@ -101,6 +114,8 @@ class SQLiteEventStore:
         return cursor
 
     # ---- runs ----
+
+    @_locked
 
     def create_run(
         self,
@@ -119,6 +134,8 @@ class SQLiteEventStore:
             )
         except sqlite3.Error as exc:
             raise StoreWriteError(str(exc)) from exc
+
+    @_locked
 
     def set_run_status(
         self,
@@ -144,15 +161,21 @@ class SQLiteEventStore:
         except sqlite3.Error as exc:
             raise StoreWriteError(str(exc)) from exc
 
+    @_locked
+
     def set_run_token_usage(self, run_id: str, total_tokens: int) -> None:
         # Token 用量由模型调用事件聚合回填，不单独建 usage 表（design/06）
         self._conn.execute("UPDATE runs SET total_tokens = ? WHERE run_id = ?", (total_tokens, run_id))
+
+    @_locked
 
     def get_run(self, run_id: str) -> dict | None:
         row = self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return dict(row) if row else None
 
     # ---- events ----
+
+    @_locked
 
     def append_event(
         self,
@@ -179,6 +202,8 @@ class SQLiteEventStore:
             seq=seq, run_id=run_id, step=step, actor=actor, type=event_type, ts=ts, payload=payload
         )
 
+    @_locked
+
     def get_events(self, run_id: str) -> list[AgentEvent]:
         rows = self._conn.execute(
             "SELECT * FROM events WHERE run_id = ? ORDER BY seq ASC", (run_id,)
@@ -197,6 +222,8 @@ class SQLiteEventStore:
         ]
 
     # ---- tool_calls：意图先行 + 同事务完成 ----
+
+    @_locked
 
     def start_tool_call(
         self,
@@ -259,6 +286,8 @@ class SQLiteEventStore:
             cursor.execute("ROLLBACK")
             raise StoreWriteError(str(exc)) from exc
 
+    @_locked
+
     def finish_tool_call(
         self,
         run_id: str,
@@ -308,6 +337,8 @@ class SQLiteEventStore:
         except sqlite3.Error as exc:
             cursor.execute("ROLLBACK")
             raise StoreWriteError(str(exc)) from exc
+
+    @_locked
 
     def record_skipped_call(
         self,
@@ -369,12 +400,16 @@ class SQLiteEventStore:
             cursor.execute("ROLLBACK")
             raise StoreWriteError(str(exc)) from exc
 
+    @_locked
+
     def get_tool_call(self, run_id: str, decision_id: str, call_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM tool_calls WHERE run_id = ? AND decision_id = ? AND call_id = ?",
             (run_id, decision_id, call_id),
         ).fetchone()
         return dict(row) if row else None
+
+    @_locked
 
     def list_tool_calls(self, run_id: str) -> list[dict]:
         rows = self._conn.execute(
@@ -383,6 +418,8 @@ class SQLiteEventStore:
         return [dict(row) for row in rows]
 
     # ---- 崩溃对账（specs/02 恢复流程；不自动重放工具调用） ----
+
+    @_locked
 
     def reconcile_run(
         self,
@@ -430,6 +467,8 @@ class SQLiteEventStore:
         return summary
 
     # ---- Trace 导出（ST-04：仅由导出产生，内容与 SQLite 一致） ----
+
+    @_locked
 
     def export_trajectory(self, run_id: str) -> str:
         lines = []
