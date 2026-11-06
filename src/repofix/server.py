@@ -62,7 +62,9 @@ class StartRequest(BaseModel):
     task: str = Field(min_length=1)
     base_ref: str = "HEAD"
     model: str = "deepseek-flash"
-    test_command: Optional[str] = None
+    test_command: Optional[str] = Field(
+        default="auto",
+        description="可见验证命令；默认 auto = Preflight 自动发现 Python 测试")
     output_dir: str = "repofix-data/web"
     max_model_calls: int = Field(default=6, ge=1)
     max_tool_calls: int = Field(default=100, ge=1)

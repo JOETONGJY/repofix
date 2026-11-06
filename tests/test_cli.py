@@ -214,7 +214,8 @@ class TestExitCodeMatrix:
             "repofix.cli._build_stack",
             lambda task_spec, config, run_id: (
                 InterruptingRunner(), store, _FakeWorkspace(), _DummyManager(), None,
-                type("R", (), {"ok": True, "test_plan": [], "baseline": {}})(),
+                type("R", (), {"ok": True, "test_plan": [], "test_plan_source": "manual",
+                            "test_plan_evidence": "", "baseline": {}})(),
             ),
         )
         result = cli_runner.invoke(app, base_args(sample_repo, tmp_path / "data2"))

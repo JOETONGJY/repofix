@@ -100,8 +100,8 @@
     <textarea id="task" placeholder="Fix the password validation bug in auth.py ..."></textarea>
     <div class="row">
       <div>
-        <label>验证命令（判定修复是否成功的测试）</label>
-        <input type="text" id="testcmd" value="python -m pytest -q --tb=no -rf">
+        <label>验证命令（默认 auto = 自动发现 Python 测试；可手动指定）</label>
+        <input type="text" id="testcmd" value="auto" placeholder="auto">
       </div>
       <div>
         <label>模型调用上限（防烧钱）</label>

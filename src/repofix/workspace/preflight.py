@@ -8,6 +8,7 @@
 """
 import shlex
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from repofix.workspace.docker_cli import DockerCli, DockerCliError
 from repofix.workspace.docker_workspace import (
@@ -25,15 +26,23 @@ class PreflightReport:
     failure_step: str | None = None
     failure_reason: str = ""
     test_plan: list[str] = field(default_factory=list)  # 解析后的结构化 argv 列表（每项 = 一条命令 argv）
+    test_plan_source: str = "none"  # auto（发现）/ manual（用户指定）/ none（未配置）
+    test_plan_evidence: str = ""  # auto 发现依据（如 "pytest.ini" / "tests/ 目录"）
     baseline: dict = field(default_factory=dict)
+
+
+AUTO_TEST_COMMAND = ["python", "-m", "pytest", "-q", "--tb=no", "-rf"]
 
 
 def parse_test_command(test_command: str | None) -> list[list[str]]:
     """CLI --test-command 字符串 → 结构化 argv（CONS-05：唯一解析点，此后不再出现 Shell 解析）。
 
     支持以 && 分隔的多条命令；每一部分用 shlex 解析为 argv。
+    特殊值 "auto" → []（由 discover_test_plan 在工作区上发现）。
     """
     if not test_command or not test_command.strip():
+        return []
+    if test_command.strip().lower() == "auto":
         return []
     plan: list[list[str]] = []
     for part in test_command.split("&&"):
@@ -41,6 +50,40 @@ def parse_test_command(test_command: str | None) -> list[list[str]]:
         if argv:
             plan.append(argv)
     return plan
+
+
+def discover_test_plan(workspace_root: Path) -> tuple[list[list[str]], str]:
+    """确定性 Python 测试发现（评审 Auto Verification Discovery）。
+
+    纯文件系统启发，不执行仓库代码。返回 (test_plan, evidence)：
+    - pytest 项目（pyproject/pytest.ini/setup.cfg/tox.ini 配置，或 tests|test 目录，
+      或 test_*.py 文件）→ [["python", "-m", "pytest", "-q", "--tb=no", "-rf"]]
+    - 无任何测试痕迹 → []（空计划 → Preflight 标记 no_tests）
+    发现依据记录在 evidence（如 "pytest.ini" / "tests/test_auth.py"）。
+    """
+    root = Path(workspace_root)
+    pytest_cfg_markers = ("pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini")
+    for marker in pytest_cfg_markers:
+        if (root / marker).exists():
+            content = (root / marker).read_text(encoding="utf-8", errors="replace")
+            if marker == "pyproject.toml" and "[tool.pytest" not in content:
+                continue
+            if marker in ("setup.cfg", "tox.ini") and "[tool:pytest]" not in content:
+                continue
+            return [list(AUTO_TEST_COMMAND)], marker
+    test_dirs = [d for d in ("tests", "test") if (root / d).is_dir()]
+    if test_dirs:
+        has_tests = any(
+            p.name.startswith(("test_",)) and p.name.endswith(".py")
+            for d in test_dirs
+            for p in (root / d).glob("*.py")
+        )
+        if has_tests:
+            return [list(AUTO_TEST_COMMAND)], f"{test_dirs[0]}/ 目录（含 test_*.py）"
+    scattered = sorted(root.glob("test_*.py"))
+    if scattered:
+        return [list(AUTO_TEST_COMMAND)], scattered[0].name
+    return [], ""
 
 
 def classify_baseline(exit_code: int | None, output: str) -> dict:
@@ -88,10 +131,22 @@ class PreflightRunner:
         self._cli = cli or DockerCli()
         self._image = image
 
-    def run(self, workspace: DockerWorkspace, test_command: str | None) -> PreflightReport:
-        """顺序执行各步；任一环境步骤失败 → ok=False（Run FAILED, fail_layer=WORKSPACE）。"""
+    def run(self, workspace: DockerWorkspace, test_command: str | None,
+            discover: bool = True) -> PreflightReport:
+        """顺序执行各步；任一环境步骤失败 → ok=False（Run FAILED, fail_layer=WORKSPACE）。
+
+        test_command="auto"（CLI/Web 默认）→ 在工作区上确定性发现测试计划；
+        手动命令 → 白名单校验后使用；来源（auto/manual）记录进报告供 Trace 追溯。
+        """
         report = PreflightReport(ok=False)
-        report.test_plan = parse_test_command(test_command)
+        if test_command and test_command.strip().lower() == "auto":
+            plan, evidence = discover_test_plan(workspace.task_dir)
+            report.test_plan = plan
+            report.test_plan_source = "auto"
+            report.test_plan_evidence = evidence
+        else:
+            report.test_plan = parse_test_command(test_command)
+            report.test_plan_source = "manual" if report.test_plan else "none"
 
         # 1. Docker 可用
         try:
@@ -106,7 +161,7 @@ class PreflightRunner:
                 f"image {self._image} not found; build it first (docker/repofix-env.Dockerfile)",
             )
 
-        # 2b. 测试命令白名单校验（specs/03：--test-command 必须转换为允许命令，不能绕过命令策略）
+        # 2b. 测试命令白名单校验（specs/03：auto 发现与手动命令同一策略，不能绕过命令策略）
         for argv in report.test_plan:
             if not check_command_allowed(argv):
                 return self._fail(

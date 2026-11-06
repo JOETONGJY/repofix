@@ -171,6 +171,8 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         preflight_summary={
             "steps": "ok",
             "test_plan": report.test_plan,
+            "test_plan_source": report.test_plan_source,
+            "test_plan_evidence": report.test_plan_evidence,
             "baseline_kind": report.baseline.get("kind"),
         },
         target_unchanged=workspace_unchanged,
@@ -182,7 +184,8 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
     return runner, store, workspace, manager, handle, report
 
 
-def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result) -> tuple[Path, str | None]:
+def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result,
+                     test_report_extra: dict | None = None) -> tuple[Path, str | None]:
     delivery_error: str | None = None
     run_dir = Path(output_dir) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -200,8 +203,15 @@ def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result) ->
         if event.type.value == "verification_finished":
             verification = event.payload
             break
+    report_payload = {"verification": verification}
+    if test_report_extra:
+        # TestPlan 来源（auto/manual）与发现依据——Trace/Test Report 可追溯（评审要求 7）
+        report_payload["test_plan"] = test_report_extra.get("test_plan", [])
+        report_payload["test_plan_source"] = test_report_extra.get("test_plan_source", "none")
+        report_payload["test_plan_evidence"] = test_report_extra.get("test_plan_evidence", "")
+        report_payload["baseline_kind"] = test_report_extra.get("baseline_kind", "")
     (run_dir / "test-report.json").write_text(
-        json.dumps({"verification": verification}, ensure_ascii=False, indent=2),
+        json.dumps(report_payload, ensure_ascii=False, indent=2),
         encoding="utf-8", newline="\n",
     )
     return run_dir, delivery_error
@@ -221,7 +231,11 @@ def run(
     task_file: Optional[Path] = typer.Option(None, "--task-file", help="从 UTF-8 文本文件读取任务"),
     base_ref: str = typer.Option("HEAD", "--base-ref", help="修改起点的 Git Commit / Ref"),
     model: str = typer.Option(DEFAULT_MODEL, "--model", help="模型 ID"),
-    test_command: Optional[str] = typer.Option(None, "--test-command", help="可见验证命令（在受控 Workspace 内执行）"),
+    test_command: Optional[str] = typer.Option(
+        "auto", "--test-command",
+        help="可见验证命令；默认 auto = Preflight 自动发现 Python 测试（pytest）。"
+             "也可显式指定（如 \"python -m pytest -q\" 或 \"auto\"）；"
+             "无可用测试时最终验证将返回 INCONCLUSIVE"),
     output_dir: Path = typer.Option(Path("repofix-data"), "--output-dir", help="运行数据根目录"),
     max_model_calls: int = typer.Option(30, "--max-model-calls", min=1),
     max_tool_calls: int = typer.Option(100, "--max-tool-calls", min=1),
@@ -285,7 +299,14 @@ def run(
             model_calls=0, tool_calls=0, token_usage={}, duration_ms=0,
         )
 
-    run_dir, delivery_error = _write_artifacts(output_dir, run_id, store, workspace, result)
+    test_report_extra = {
+        "test_plan": preflight.test_plan,
+        "test_plan_source": preflight.test_plan_source,
+        "test_plan_evidence": preflight.test_plan_evidence,
+        "baseline_kind": preflight.baseline.get("kind", "") if isinstance(preflight.baseline, dict) else "",
+    }
+    run_dir, delivery_error = _write_artifacts(
+        output_dir, run_id, store, workspace, result, test_report_extra=test_report_extra)
     # 清理顺序（评审 P1）：先停容器（进程树），再清理副本目录
     try:
         workspace.close()
