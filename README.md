@@ -264,7 +264,7 @@ repofix/
 | **M4** | Read-only Review Agent 与反馈闭环 | ✅ 完成（三轮评审修订 + 真实双 Agent Trace：2×APPROVED + 预算语义样本） |
 | **M5** | Evaluation Harness（独立验收 + 三层指标 + Experiment G 对照） | ✅ 核心完成（EV-01~05 + Experiment G 首轮对照：三组 2/2 成功，双 Agent +10.3% tokens，详见 docs/EXPERIMENT-G.md） |
 
-诚实的进度声明：项目已有完整的设计文档体系与经过测试的 Harness 实现（Runtime 协议、工具系统、隔离工作区均可运行验证），但**尚未产生真实模型修复成功率、Reviewer 提升幅度等实测数据**——这些在 M3–M5 完成后由实验给出，不预先声称。
+**进度与数据边界**：五阶段全部完成，Harness 与评测流程经 6 次真实模型运行验证（详见上方实测数据）。样本量 n=2/组为 Pilot 规模——扩展到 20–30 任务后的统计结论列为 Future Work，不以小样本外推。
 
 ---
 

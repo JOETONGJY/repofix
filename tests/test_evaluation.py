@@ -4,6 +4,7 @@
 """
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from repofix.contracts import (
@@ -92,11 +93,15 @@ class TestResultJudge:
         patch = write_patch(tmp_path, "fix.patch", "len(pw) >= 0", "len(pw) >= 8")
         _, head = make_clean_repo(tmp_path)
         # provider 每次 judge 重建全新干净仓库（design/09：Base 重初始化，互不污染）
-        judge1 = ResultJudge(workspace_provider=lambda tmp: make_clean_repo(tmp)[0])
-        judge2 = ResultJudge(workspace_provider=lambda tmp: make_clean_repo(tmp)[0])
+        # 显式宿主回退：仅测试路径（isolated_execution=False 如实标记）
+        judge1 = ResultJudge(workspace_provider=lambda tmp: make_clean_repo(tmp)[0],
+                             allow_host_fallback=True)
+        judge2 = ResultJudge(workspace_provider=lambda tmp: make_clean_repo(tmp)[0],
+                             allow_host_fallback=True)
         task = make_task(head)
         r1 = judge1.judge(task, patch, run_result())
         r2 = judge2.judge(task, patch, run_result())
+        assert r1.isolated_execution is False and r2.isolated_execution is False
         assert r1.outcome is EvaluationOutcome.SUCCESS
         assert r2.outcome is EvaluationOutcome.SUCCESS  # 相同 Patch 相同环境结果一致
 
@@ -104,7 +109,7 @@ class TestResultJudge:
         """"修复"与 Bug 相同（未真正修复）：应用成功但隐藏测试仍失败。"""
         repo, head = make_clean_repo(tmp_path)
         patch = write_patch(tmp_path, "bad.patch", "len(pw) >= 0", "len(pw) >= 0")
-        judge = ResultJudge(workspace_provider=lambda tmp: repo)
+        judge = ResultJudge(workspace_provider=lambda tmp: repo, allow_host_fallback=True)
         record = judge.judge(make_task(head), patch, run_result(),
                              clean_provider=lambda tmp: repo)
         assert record.outcome is EvaluationOutcome.FAILED
@@ -200,3 +205,47 @@ class TestContractConversion:
         assert result.run_status is RunStatus.COMPLETED  # Runtime 维度
         assert result.outcome is EvaluationOutcome.FAILED  # 验收维度
         assert result.regression_detected is True
+
+
+class TestIsolationEnforced:
+    def test_default_requires_container_isolation(self, tmp_path):
+        """最终收尾：docker_cli=None 且未显式允许宿主回退 → INCONCLUSIVE，绝不静默降级宿主。"""
+        repo, head = make_clean_repo(tmp_path)
+        patch = write_patch(tmp_path, "fix.patch", "len(pw) >= 0", "len(pw) >= 8")
+        judge = ResultJudge(workspace_provider=lambda tmp: repo)  # 默认：无回退
+        record = judge.judge(make_task(head), patch, run_result(),
+                             clean_provider=lambda tmp: repo)
+        assert record.outcome is EvaluationOutcome.INCONCLUSIVE
+        assert "isolation required" in record.reason
+        assert record.hidden_tests_rc is None  # 宿主 pytest 从未运行
+
+    def test_host_fallback_env_minimal_no_secrets(self, tmp_path, monkeypatch):
+        """宿主回退（显式开启）时环境最小化——宿主 API Key 不进测试进程。"""
+
+        import repofix.evaluation.harness as harness_module
+
+        captured: dict = {}
+
+        original_run = harness_module.subprocess.run
+
+        def spy_run(cmd, cwd=None, capture_output=False, text=False, timeout=None, env=None, check=False, **kwargs):
+            # 只拦截 pytest 调用，git 命令照常执行
+            if cmd and cmd[0] == sys.executable:
+                captured["env"] = env
+                return type("P", (), {"returncode": 0, "stdout": "1 passed", "stderr": ""})()
+            return original_run(cmd, cwd=cwd, capture_output=capture_output,
+                                text=text, timeout=timeout, env=env, check=check, **kwargs)
+
+        monkeypatch.setattr(harness_module.subprocess, "run", spy_run)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake-for-test")
+        monkeypatch.setenv("SECRET_TOKEN", "tok-fake")
+
+        repo, head = make_clean_repo(tmp_path)
+        patch = write_patch(tmp_path, "p.patch", "len(pw) >= 0", "len(pw) >= 8")
+        judge = ResultJudge(workspace_provider=lambda tmp: repo, allow_host_fallback=True)
+        judge.judge(make_task(head), patch, run_result(),
+                    clean_provider=lambda tmp: repo)
+        env = captured["env"]
+        assert "DEEPSEEK_API_KEY" not in env
+        assert "SECRET_TOKEN" not in env
+        assert "PYTHONPATH" in env  # 测试所需的最小变量保留

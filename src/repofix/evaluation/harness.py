@@ -70,11 +70,15 @@ class ResultJudge:
         docker_cli=None,
         image: str = "repofix-env:latest",
         container_timeout: int = 300,
+        allow_host_fallback: bool = False,
     ):
         self._provider = workspace_provider
-        self._docker_cli = docker_cli  # None = 容器不可用（仅测试降级路径）
+        self._docker_cli = docker_cli
         self._image = image
         self._container_timeout = container_timeout
+        # 评审最终收尾：正常评测强制 Docker 隔离——docker_cli 缺失且未显式
+        # 开启宿主回退时，隐藏测试判定为评测设施异常（INCONCLUSIVE），不降级宿主
+        self._allow_host_fallback = allow_host_fallback
 
     def judge(self, task: EvalTask, patch_path, run_result: RunResult | None,
               clean_provider=None) -> EvalRecord:
@@ -129,7 +133,13 @@ class ResultJudge:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
 
-            # P0-1：容器内执行隐藏测试（受限镜像、最小环境变量、不传宿主密钥）
+            # P0-1（最终收尾）：正常评测强制容器隔离——docker_cli 缺失且未显式
+            # 允许宿主回退 → INCONCLUSIVE（评测设施异常），绝不静默降级宿主执行
+            if self._docker_cli is None and not self._allow_host_fallback:
+                record.outcome = EvaluationOutcome.INCONCLUSIVE
+                record.reason = ("evaluation isolation required: no Docker CLI configured; "
+                                 "refusing to run hidden tests on the host")
+                return record
             record.isolated_execution = self._docker_cli is not None
             test_rc, test_out = self._run_hidden_tests(repo)
             record.hidden_tests_rc = test_rc
@@ -137,9 +147,10 @@ class ResultJudge:
                 record.outcome = EvaluationOutcome.SUCCESS
                 record.reason = "hidden tests passed on independently applied patch"
             else:
+                # 口径修正（评审收尾）：隐藏测试失败 = 修复未达标（FAILED）；
+                # regression 需与基线对比判定——本判定无基线数据，不标 regression
                 record.outcome = EvaluationOutcome.FAILED
                 record.reason = f"hidden tests failed rc={test_rc}"
-                record.regression_detected = True
                 _ = test_out
             return record
         except Exception as exc:  # noqa: BLE001 —— 评测设施异常 → INCONCLUSIVE（EV-04）
@@ -167,8 +178,8 @@ class ResultJudge:
                 raise RuntimeError(f"container execution failed: {exc}") from exc
             finally:
                 self._docker_cli.remove_container(name, timeout=60)
-        # 降级路径（仅单元测试）：宿主执行但环境变量最小化——不复制 os.environ，
-        # 只传 PATH/SYSTEMROOT；宿主 API Key 等密钥不进入测试进程
+        # 显式宿主回退路径（allow_host_fallback=True，仅供测试）：环境变量最小化——
+        # 不复制 os.environ，只传 PATH/SYSTEMROOT；宿主 API Key 等密钥不进入测试进程
         import os
 
         repo = _repo_dir(repo)

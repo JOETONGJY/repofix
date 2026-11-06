@@ -1,4 +1,4 @@
-# Experiment G：单 Agent vs 双 Agent vs 预算匹配对照报告
+# Experiment G：单 Agent vs 双 Agent vs 预算匹配对照（Pilot，n=2/组）
 
 - 日期：2026-11-06
 - 模型：deepseek-flash（Non-thinking，thinking 显式 disabled）
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | A | 单 Agent Baseline（--no-review） | slugify + clamp |
 | B | 双 Agent（--review，Reviewer 3 轮/8 只读工具独立预算） | 同上 |
-| bm | 预算匹配单 Agent（max_model_calls=13 = B 组实际消耗） | 同上 |
+| bm | 预算对照单 Agent（上限对齐 B 组**实际消耗**；实际每任务仍仅用 6/7 次——**观察性对照，非严格预算匹配**） | 同上 |
 
 ## 结果
 
@@ -27,11 +27,11 @@
 
 **汇总**：A = 2/2 成功、22,775 tokens；B = 2/2 成功、25,124 tokens（**+10.3%**）；BM = 2/2 成功、25,395 tokens。三组独立验收（可见测试）全部通过。
 
-## 结论（如实，基于小样本 n=2/组）
+## 结论（如实，基于小样本 n=2/组——本报告为 **Pilot**，验证评测流程；不构成双 Agent 质量结论）
 
 1. **简单任务上三组成功率相同（2/2）**——Reviewer 没有带来额外修复收益，也没有造成损失。
 2. **双 Agent 成本 +10.3%**（Review 轮的额外模型调用与 Token），来自 Reviewer 探索 + 结论提交。
-3. **Reviewer Finding 表现**：1 次 APPROVED（绑定 patch_hash）、1 次 INCONCLUSIVE（Reviewer 3 轮预算内完成探索但未提交结论——预算感知 Prompt 的一个改进方向）。零误报 FINDINGS。
+3. **Reviewer Finding 表现**：1 次 APPROVED（绑定 patch_hash）、1 次 INCONCLUSIVE；**Finding 数量 0，Finding Precision = N/A（暂无可评估样本）**——不据此声称 Reviewer 有效或无效。
 4. **预算语义验证**：组 B clamp 的 Reviewer INCONCLUSIVE 恰好证明 Reviewer 独立预算（3 轮）在不阻断主任务的前提下正确截断（RV-05/RV-06）。
 5. **样本量声明**：n=2/组不足以推广到复杂任务；本实验验证的是**评测器与三组对照流程端到端可用**，扩展到 20–30 任务后的数据才有统计意义（design/09 的既定立场）。
 
@@ -54,6 +54,8 @@ repofix run --repo <repo> --task "<task>" --test-command "python -m pytest -q --
 
 
 ## 追加：独立隐藏测试验收（评审 P0-3 闭环证据）
+
+> 口径区分：正文的可见测试通过（6/6）是 **Agent 工作区内**的验证；本节隐藏验收是**独立工作区**的判据——两者不同。B 组隐藏验收结果为 **1/2**（clamp SUCCESS；slugify 发现真实缺陷）。
 
 评审后补跑 ResultJudge 真实隐藏验收（隔离容器内执行，`isolated=True`，宿主密钥不进测试进程）：
 
