@@ -73,13 +73,18 @@ def discover_test_plan(workspace_root: Path) -> tuple[list[list[str]], str]:
             return [list(AUTO_TEST_COMMAND)], marker
     test_dirs = [d for d in ("tests", "test") if (root / d).is_dir()]
     if test_dirs:
-        has_tests = any(
-            p.name.startswith(("test_",)) and p.name.endswith(".py")
-            for d in test_dirs
-            for p in (root / d).glob("*.py")
-        )
-        if has_tests:
-            return [list(AUTO_TEST_COMMAND)], f"{test_dirs[0]}/ 目录（含 test_*.py）"
+        # 有界递归：嵌套目录（tests/unit/test_x.py）也能发现；
+        # 跳过 .git/.venv 等虚拟/隐藏目录，深度上限 3
+        skip = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", "node_modules"}
+        for d in test_dirs:
+            has_tests = any(
+                p.name.startswith("test_") and p.name.endswith(".py")
+                for p in (root / d).rglob("*.py")
+                if not (set(p.parts) & skip)
+                and len(p.relative_to(root).parts) <= 5
+            )
+            if has_tests:
+                return [list(AUTO_TEST_COMMAND)], f"{d}/ 目录（含 test_*.py）"
     scattered = sorted(root.glob("test_*.py"))
     if scattered:
         return [list(AUTO_TEST_COMMAND)], scattered[0].name

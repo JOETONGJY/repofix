@@ -1,5 +1,7 @@
 """Auto Verification Discovery 测试（评审要求：确定性测试发现 + 来源追溯 + 语义区分）。"""
 
+from pathlib import Path
+
 import pytest
 
 from repofix.workspace.preflight import (
@@ -104,3 +106,36 @@ def sample_repo_with_tests(tmp_path, with_tests=True):
     subprocess.run(["git", "-c", "user.email=v@v", "-c", "user.name=v", "commit", "-q", "-m", "b"],
                    cwd=repo, check=True)
     return repo
+
+
+class TestNestedDiscovery:
+    def test_nested_test_dir_discovered(self, tmp_path):
+        """P1：tests/unit/test_auth.py（嵌套）也能发现。"""
+        nested = tmp_path / "tests" / "unit"
+        nested.mkdir(parents=True)
+        (nested / "test_auth.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+        plan, evidence = discover_test_plan(tmp_path)
+        assert plan == [AUTO_TEST_COMMAND]
+        assert "tests/" in evidence
+
+    def test_venv_not_scanned(self, tmp_path):
+        """有界递归跳过 .venv/.git 等目录（不误报依赖里的测试文件）。"""
+        (tmp_path / "tests").mkdir()
+        venv_tests = tmp_path / ".venv" / "lib" / "site-packages" / "pkg" / "tests"
+        venv_tests.mkdir(parents=True)
+        (venv_tests / "test_vendor.py").write_text("def test_v():\n    assert True\n", encoding="utf-8")
+        (tmp_path / "tests" / "test_real.py").write_text("def test_r():\n    assert True\n", encoding="utf-8")
+        plan, evidence = discover_test_plan(tmp_path)
+        assert plan == [AUTO_TEST_COMMAND]
+        assert ".venv" not in evidence
+
+
+class TestWebAutoDefaults:
+    def test_web_and_server_defaults_are_auto(self):
+        """GPT 复核项：三入口默认语义统一——web/index.html 预填 auto，
+        FastAPI StartRequest 默认 auto，空输入由 Pydantic 拒绝而非静默禁用发现。"""
+        web_html = (Path(__file__).parent.parent / "web" / "index.html").read_text(encoding="utf-8")
+        assert 'id="testcmd" value="auto"' in web_html
+        import repofix.server as srv
+        fields = srv.StartRequest.model_fields
+        assert fields["test_command"].default == "auto"
