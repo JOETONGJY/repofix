@@ -80,9 +80,10 @@ class BudgetTracker:
             self._accumulate_tokens(usage)
 
     def set_stage_model_limit(self, limit: int) -> None:
-        """修正阶段生效上限（评审复核边界 1）：原始预算耗尽后允许 review_fix_model_calls
-        的额外请求——底层 reserve 与阶段 deadline 使用同一上限，重试同样不能突破。"""
-        self._effective_model_limit = max(self._effective_model_limit, limit)
+        """修正阶段生效上限（评审复核边界 A）：与阶段 deadline **精确对齐**——
+        进入修正阶段后，无论原始预算是否用尽，超出 deadline 的请求（含 Gateway
+        内部重试）都会被拒绝，确保额外请求不超过 review_fix_model_calls。"""
+        self._effective_model_limit = limit
 
     def reserve_model_attempt(self) -> None:
         """原子语义：每次真实 API 请求发出前检查并占用预算（评审 P0-2）。

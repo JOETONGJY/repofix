@@ -337,3 +337,104 @@ class TestRecheckBoundaries:
         assert result.runtime_status is RunStatus.COMPLETED
         assert result.review_status == "INCONCLUSIVE"  # 不默认接受
         # 从事件 summary 验证降级原因（复核失败 → INCONCLUSIVE 而非默认接受）
+
+
+class TestRecheckRound2:
+    """M4 复核第二轮：修正阶段 API 硬上限精确对齐 + Trace 最终状态一致性。"""
+
+    def test_boundary_a_exact_deadline_with_retries(self, registry, monkeypatch):
+        """30/5/3 场景：连续 429 下第 9 次请求不会发出。"""
+        import repofix.runtime.review_runner as _rr  # noqa: F401
+        from repofix.runtime.loop_guard import BudgetTracker as _Real
+
+        cfg = RunConfig(model_id="m", review_enabled=True, review_fix_model_calls=3,
+                        max_model_calls=30)
+        tracker = _Real(cfg, FakeClock())
+        for _ in range(5):
+            tracker.reserve_model_attempt()  # Main 已用 5 次
+        assert tracker.model_calls == 5
+
+        tracker.set_stage_model_limit(5 + 3)  # 修正阶段 deadline = 8
+
+        attempts: list[int] = []
+
+        class Adapter:
+            counts_own_attempts = True
+
+            def __init__(self):
+                self.on_attempt = None
+
+            def complete(self, request):
+                for _ in range(3):  # 每次调用内部重试至多 2 次（模拟 429）
+                    self.on_attempt()
+                    attempts.append(len(attempts) + 1)
+                raise ModelTransientError("429 after retries")  # 全部尝试失败后才抛
+
+        adapter = Adapter()
+        adapter.on_attempt = tracker.reserve_model_attempt
+
+        # Main 已用 5 次，修正阶段配额 3 次；每次 Runtime 调用消耗 3 次尝试
+        # → complete#1 用掉第 6/7/8 次（阶段配额耗尽）；
+        # → complete#2 的首次尝试 = 全局第 9 次，被 reserve 硬上限拒绝——根本不会发出
+        with pytest.raises(ModelTransientError):
+            adapter.complete(None)
+        assert attempts == [1, 2, 3]
+        assert tracker.model_calls == 8  # 精确到 deadline（5+3），无越界
+
+        with pytest.raises(BudgetViolation):
+            adapter.complete(None)  # 第 9 次尝试被 reserve 硬上限拒绝
+        assert len(attempts) == 3  # 第 9 次请求根本不会发出
+
+    def test_boundary_a_stage_reset_between_phases(self):
+        """阶段上限在两次 set 之间正确替换（不保留宽松值）。"""
+        from repofix.runtime.loop_guard import BudgetTracker
+
+        tracker = BudgetTracker(RunConfig(model_id="m", max_model_calls=30), FakeClock())
+        tracker.set_stage_model_limit(8)
+        # 再设置一个更紧的值：直接替换而非 max 保留
+        tracker.set_stage_model_limit(6)
+        for _ in range(6):
+            tracker.reserve_model_attempt()
+        with pytest.raises(BudgetViolation):
+            tracker.reserve_model_attempt()  # 第 7 次被拒（上限=6）
+        assert tracker.model_calls == 6
+
+    def test_boundary_b_downgrade_recorded_in_trace(self, registry):
+        """P1：APPROVED 降级 INCONCLUSIVE 后，Trace 表达最终有效状态。"""
+        config = RunConfig(model_id="m", review_enabled=True)
+        registry2 = ToolRegistry()
+        register_default_tools(registry2)
+
+        # 消耗顺序：verification "1" → review "2" → 复核 "3" ≠ "2"（漂移被记录）
+        hash_values = ["1" * 64, "2" * 64, "3" * 64]
+
+        def drifting_provider():
+            return hash_values.pop(0) if hash_values else "3" * 64
+
+        class ScriptedReview:
+            def review(self, request):
+                from repofix.contracts import ReviewReport
+                return ReviewReport(status="APPROVED", patch_hash=request.patch_hash)
+
+        runner = AgentRunner(
+            run_id="run_tr", task=TaskSpec(**TASK_ARGS), config=config,
+            model_client=ScriptedModelClient(
+                [model_response("m1", [make_tool_call("f1", "finish", summary="x")])]),
+            registry=registry2, dispatcher=ToolDispatcher(registry2, FakeToolExecutor()),
+            store=SQLiteEventStore(":memory:"),
+            verifier=FakeVerifier([_passed()]), clock=FakeClock(),
+            patch_hash_provider=drifting_provider,
+            review_runner_factory=lambda rid: ScriptedReview(),
+            reviewer_executor=FakeToolExecutor(),
+        )
+        result = runner.run()
+        assert result.review_status == "INCONCLUSIVE"
+        # Trace 中有两条 REVIEW_FINISHED：原始 APPROVED（可追溯）+ 最终 INCONCLUSIVE
+        reviews = [e.payload for e in runner._store.get_events("run_tr")
+                   if e.type.value == "review_finished"]
+        # Trace 最终状态：降级事件记录最终 INCONCLUSIVE 与原始 APPROVED（可追溯）。
+        # （Stub Review 不经过 ReviewRunner 类，故原始 APPROVED 不单独成事件）
+        assert len(reviews) == 1
+        assert reviews[0]["status"] == "INCONCLUSIVE"
+        assert reviews[0].get("original_status") == "APPROVED"
+        assert "workspace changed" in reviews[0]["summary"]

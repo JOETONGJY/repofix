@@ -426,10 +426,32 @@ class AgentRunner:
                           "could not confirm workspace unchanged after review")
                 review = ReviewReport(status="INCONCLUSIVE", patch_hash=patch_hash, findings=[],
                                       summary=f"{reason}; review invalidated")
+                # Trace 最终状态：记录降级后的有效结论（保留 original 供追溯）
+                self._append_event(EventType.REVIEW_FINISHED, {
+                    "status": "INCONCLUSIVE",
+                    "patch_hash": patch_hash,
+                    "original_status": "APPROVED",
+                    "summary": f"final status after hash recheck: {reason}",
+                })
 
         self._review_status = review.status
         self._reviewed_patch_hash = review.patch_hash or patch_hash
-        # REVIEW_FINISHED 已由 ReviewRunner.review 记录（含 findings/summary 详情）——不重复记录
+
+        # 评审复核边界 B：Runtime 复核（hash 漂移）改变审查结论时，追加一条最终有效状态
+        # 事件——保留 ReviewRunner 原始输出的可追溯性，同时让 Trace 表达最终结果
+        if review.status in ("APPROVED", "FINDINGS") and self._patch_hash_provider is not None:
+            try:
+                final_hash = self._patch_hash_provider_full()["patch_hash"]
+            except Exception:  # noqa: BLE001
+                final_hash = None
+            if final_hash is not None and final_hash != patch_hash:
+                self._append_event(EventType.REVIEW_FINISHED, {
+                    "status": "INCONCLUSIVE",
+                    "patch_hash": patch_hash,
+                    "original_status": review.status,
+                    "summary": (f"final status after hash recheck: workspace changed "
+                                f"({patch_hash[:12]} -> {final_hash[:12]})"),
+                })
 
         if review.status == "APPROVED":
             return RunStatus.COMPLETED
