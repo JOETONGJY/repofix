@@ -84,7 +84,7 @@ def _fake_stack_factory(captured: dict | None = None):
             model_client=ScriptedModelClient([finish]), registry=registry,
             dispatcher=ToolDispatcher(registry, workspace),
             store=store, verifier=verifier, clock=FakeClock(),
-            patch_hash_provider=lambda: "2" * 64,
+            patch_hash_provider=lambda: workspace.get_changes()["patch_hash"],  # 动态：与 Verifier 重算一致
             review_runner_factory=lambda rid: ScriptedReviewRunner(),
             reviewer_executor=FakeToolExecutor(),
         )

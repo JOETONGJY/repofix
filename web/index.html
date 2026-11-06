@@ -34,7 +34,12 @@
     padding: 8px 10px; font-family: var(--mono); font-size: 13px;
   }
   textarea { min-height: 72px; resize: vertical; }
-  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input[type=number] {
+    width: 100%; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px 10px; font-family: var(--mono); font-size: 13px;
+  }
+  input:focus, textarea:focus, input[type=number]:focus { outline: none; border-color: var(--accent); }
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
   button {
@@ -44,13 +49,15 @@
   }
   button:disabled { background: #1f6feb40; color: var(--dim); cursor: not-allowed; }
   button:hover:not(:disabled) { background: #2ea043; }
+  .switch-label { display: flex; align-items: center; gap: 8px; margin: 14px 0 0;
+    font-size: 13px; color: var(--fg); cursor: pointer; }
+  .switch-label input { width: auto; cursor: pointer; }
   .status-line { margin-top: 12px; color: var(--dim); font-size: 12px; min-height: 18px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .dot.run { background: var(--yellow); animation: pulse 1.2s infinite; }
   .dot.ok { background: var(--green); }
   .dot.err { background: var(--red); }
   @keyframes pulse { 50% { opacity: 0.3; } }
-  /* 事件流 */
   #stream {
     background: #010409; border: 1px solid var(--border); border-radius: 6px;
     padding: 12px 16px; min-height: 200px; max-height: 480px;
@@ -66,7 +73,6 @@
   .tag.preflight_completed { color: var(--green); }
   .ev .detail { color: var(--dim); }
   .ev .actor-reviewer { color: var(--purple); }
-  /* 结果卡片 */
   #result { display: none; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
   .stat { border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; }
@@ -88,24 +94,24 @@
 </header>
 <div class="wrap">
   <div class="panel">
-    <label>仓库路径</label>
+    <label>仓库路径（本地 Git 仓库文件夹）</label>
     <input type="text" id="repo" placeholder=".\demo-repo">
-    <label>任务描述</label>
+    <label>任务描述（发给 Agent 的指令）</label>
     <textarea id="task" placeholder="Fix the password validation bug in auth.py ..."></textarea>
     <div class="row">
       <div>
-        <label>验证命令</label>
+        <label>验证命令（判定修复是否成功的测试）</label>
         <input type="text" id="testcmd" value="python -m pytest -q --tb=no -rf">
       </div>
       <div>
-        <label>模型调用上限</label>
-        <input type="text" id="maxcalls" value="6">
-      </div>
-      <div>
-        <label>审查 Agent</label>
-        <input type="text" id="review" value="off" placeholder="on / off">
+        <label>模型调用上限（防烧钱）</label>
+        <input type="number" id="maxcalls" value="6" min="1" max="50">
       </div>
     </div>
+    <label class="switch-label">
+      <input type="checkbox" id="review">
+      启用审查 Agent（修完后由第二个只读 Agent 审查 Patch）
+    </label>
     <button id="btn" onclick="startRun()">▶ 运行</button>
     <div class="status-line" id="statusline"></div>
   </div>
@@ -124,6 +130,8 @@
 </div>
 
 <script>
+"use strict";
+// 事件类型 → 展示标签
 const TAGS = {
   run_started: "run started", preflight_completed: "preflight ✓",
   model_requested: "→ model", model_responded: "← model",
@@ -131,48 +139,73 @@ const TAGS = {
   tool_started: "tool started", tool_finished: "tool finished",
   verification_finished: "verification", review_started: "review started",
   review_finished: "review finished", run_finished: "run finished",
+  context_budget_exceeded: "context budget",
 };
+
 function el(id) { return document.getElementById(id); }
+
+// 评审 P0-2：statusline 用 textContent，不拼 innerHTML
 function setStatus(cls, text) {
-  el("statusline").innerHTML = `<span class="dot ${cls}"></span>${text}`;
+  const line = el("statusline");
+  line.textContent = "";
+  const dot = document.createElement("span");
+  dot.className = "dot " + cls;
+  line.append(dot, text);
 }
+
 function summarize(payload) {
   if (payload.tool_name) {
-    const rc = payload.exit_code !== undefined && payload.exit_code !== null ? ` exit=${payload.exit_code}` : "";
-    const st = payload.status ? ` [${payload.status}]` : "";
-    return `${payload.tool_name}${rc}${st}`;
+    const rc = payload.exit_code !== undefined && payload.exit_code !== null
+      ? " exit=" + payload.exit_code : "";
+    const st = payload.status ? " [" + payload.status + "]" : "";
+    return payload.tool_name + rc + st;
   }
   if (payload.status) return payload.status;
   if (payload.termination_reason) return payload.termination_reason;
   if (payload.detail) return payload.detail;
   return "";
 }
+
+// 评审 P0-2：事件 detail 来自工具输出/错误文本（不可信）——
+// 用 textContent 构建节点，绝不经 innerHTML 拼接，防止恶意 HTML 执行
 function renderEvent(ev) {
   const tag = TAGS[ev.type] || ev.type;
   const actor = ev.actor === "reviewer" ? " reviewer" : "";
   const detail = summarize(ev.payload);
   const div = document.createElement("div");
   div.className = "ev";
-  div.innerHTML =
-    `<span class="seq">#${String(ev.seq).padStart(3, "0")}</span> `
-    + `<span class="tag ${ev.type}">${tag}</span>`
-    + `<span class="actor-reviewer">${actor}</span> `
-    + `<span class="detail">${detail}</span>`;
+  const seqSpan = document.createElement("span");
+  seqSpan.className = "seq";
+  seqSpan.textContent = "#" + String(ev.seq).padStart(3, "0");
+  const tagSpan = document.createElement("span");
+  tagSpan.className = "tag " + ev.type;
+  tagSpan.textContent = tag;
+  const actorSpan = document.createElement("span");
+  actorSpan.className = "actor-reviewer";
+  actorSpan.textContent = actor;
+  const detailSpan = document.createElement("span");
+  detailSpan.className = "detail";
+  detailSpan.textContent = detail;
+  div.append(seqSpan, " ", tagSpan, " ", actorSpan, " ", detailSpan);
   const box = el("stream");
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
+
 function startRun() {
   const payload = {
     repo: el("repo").value.trim(),
     task: el("task").value.trim(),
     test_command: el("testcmd").value.trim() || null,
-    max_model_calls: parseInt(el("maxcalls").value) || 6,
-    review: el("review").value.trim().toLowerCase() === "on",
+    max_model_calls: parseInt(el("maxcalls").value, 10) || 6,
+    review: el("review").checked,
   };
-  if (!payload.repo || !payload.task) { setStatus("err", "仓库路径与任务描述为必填"); return; }
+  if (!payload.repo || !payload.task) {
+    setStatus("err", "仓库路径与任务描述为必填");
+    return;
+  }
   el("btn").disabled = true;
-  el("stream").innerHTML = "";
+  el("stream").textContent = "";
   el("streamPanel").style.display = "";
   el("result").style.display = "none";
   setStatus("run", "启动 Run ...");
@@ -180,45 +213,94 @@ function startRun() {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   }).then(r => r.json()).then(start => {
-    setStatus("run", `Run ${start.run_id} 执行中 ...`);
+    setStatus("run", "Run " + start.run_id + " 执行中 ...");
     subscribe(start.run_id);
-  }).catch(e => { setStatus("err", "启动失败: " + e); el("btn").disabled = false; });
+  }).catch(e => {
+    setStatus("err", "启动失败: " + e);
+    el("btn").disabled = false;
+  });
 }
+
+// 评审 P1：SSE 断开时提示并自动重连（EventSource 原生重试），
+// 重试超限后查询状态兜底——避免按钮永远禁用
 function subscribe(runId) {
-  const es = new EventSource(`/api/runs/${runId}/events`);
+  let reconnects = 0;
+  const es = new EventSource("/api/runs/" + runId + "/events");
   es.onmessage = (msg) => {
+    reconnects = 0;
     const ev = JSON.parse(msg.data);
     if (ev.type === "done") { es.close(); onDone(runId, ev); return; }
     renderEvent(ev);
-    if (ev.type === "run_finished") {
-      setStatus("run", "生成结果 ...");
+    if (ev.type === "run_finished") setStatus("run", "生成结果 ...");
+  };
+  es.onerror = () => {
+    reconnects += 1;
+    setStatus("run", "连接中断，自动重连中 (" + reconnects + ") ...");
+    if (reconnects >= 5) {
+      es.close();
+      fetch("/api/runs/" + runId).then(x => x.json()).then(st => {
+        if (st.status === "completed" || st.status === "failed" || st.status === "budget_exceeded") {
+          // Run 已结束只是流断了——直接拉结果
+          onDone(runId, { status: st.status, error: st.error });
+        } else {
+          setStatus("err", "事件流连接失败（已重试 5 次）——Run 可能仍在执行，刷新页面查看");
+          el("btn").disabled = false;
+        }
+      });
     }
   };
-  es.onerror = () => { es.close(); };
 }
+
+function statCard(k, v, cls) {
+  const card = document.createElement("div");
+  card.className = "stat";
+  const key = document.createElement("div");
+  key.className = "k";
+  key.textContent = k;
+  const val = document.createElement("div");
+  val.className = "v " + (cls || "");
+  val.textContent = v;
+  card.append(key, val);
+  return card;
+}
+
 async function onDone(runId, doneEv) {
-  setStatus(doneEv.status === "completed" ? "ok" : "err",
-    doneEv.status === "completed" ? "运行完成" : ("运行结束: " + (doneEv.error || doneEv.status)));
-  const r = await fetch(`/api/runs/${runId}`).then(x => x.json());
+  const okRun = doneEv.status === "completed";
+  const failedRun = doneEv.status === "failed" || doneEv.status === "budget_exceeded";
+  setStatus(failedRun ? "err" : "ok",
+    okRun ? "运行完成（可见验证通过）"
+    : failedRun ? "运行失败: " + (doneEv.error || doneEv.status)
+    : "运行结束: " + doneEv.status);
+  const r = await fetch("/api/runs/" + runId).then(x => x.json());
   el("btn").disabled = false;
   if (!r.result) return;
   const res = r.result;
   const vOk = res.verification_status === "passed";
-  el("stats").innerHTML = `
-    <div class="stat"><div class="k">Runtime</div><div class="v ${res.runtime_status === 'completed' ? 'ok' : 'bad'}">${res.runtime_status}</div></div>
-    <div class="stat"><div class="k">验证</div><div class="v ${vOk ? 'ok' : 'bad'}">${res.verification_status}</div></div>
-    <div class="stat"><div class="k">修改文件</div><div class="v">${res.modified_files.length}</div></div>
-    <div class="stat"><div class="k">模型调用</div><div class="v">${res.model_calls}</div></div>
-    <div class="stat"><div class="k">工具调用</div><div class="v">${res.tool_calls}</div></div>
-    <div class="stat"><div class="k">Tokens</div><div class="v">${res.token_usage.total || 0}</div></div>
-    <div class="stat"><div class="k">Review</div><div class="v">${res.review_status || "-"}</div></div>`;
+  // 结果统计值来自固定枚举/数字（RunResult 契约），用 textContent 构建
+  const stats = el("stats");
+  stats.textContent = "";
+  stats.append(
+    statCard("Runtime", res.runtime_status, res.runtime_status === "completed" ? "ok" : "bad"),
+    statCard("验证", res.verification_status, vOk ? "ok" : "bad"),
+    statCard("修改文件", res.modified_files.length),
+    statCard("模型调用", res.model_calls),
+    statCard("工具调用", res.tool_calls),
+    statCard("Tokens", res.token_usage.total || 0),
+    statCard("Review", res.review_status || "-"),
+  );
   try {
-    const patch = await fetch(`/api/runs/${runId}/patch`).then(x => x.text());
-    el("patch").innerHTML = patch.split("\n").map(l => {
-      const cls = l.startsWith("+") ? "add" : (l.startsWith("-") ? "del" : "");
-      return `<span class="${cls}">${l.replace(/</g, "&lt;")}</span>\n`;
-    }).join("");
-  } catch (e) { el("patch").textContent = "(patch 不可用)"; }
+    const patch = await fetch("/api/runs/" + runId + "/patch").then(x => x.text());
+    const box = el("patch");
+    box.textContent = "";
+    for (const line of patch.split("\n")) {
+      const row = document.createElement("span");
+      row.className = line.startsWith("+") ? "add" : (line.startsWith("-") ? "del" : "");
+      row.textContent = line + "\n";
+      box.appendChild(row);
+    }
+  } catch (e) {
+    el("patch").textContent = "(patch 不可用)";
+  }
   el("result").style.display = "";
 }
 </script>

@@ -24,9 +24,13 @@ from repofix.cli import (
     _validate_repo,
     _write_artifacts,
 )
+from repofix.contracts import RunStatus
+from repofix.gateway.adapter import resolve_context_window
 from repofix.state.store import StoreWriteError
 from repofix.workspace.errors import DirtyWorkspaceError, WorkspaceError
 
+# 安全边界：Server 仅绑定本机 127.0.0.1（见 uvicorn --host），无认证机制——
+# 不要将端口转发到局域网或公网；可访问的仓库路径以本机文件系统为限。
 app = FastAPI(title="RepoFix", docs_url=None, redoc_url=None)
 
 
@@ -35,7 +39,7 @@ class RunHandle:
     """一次 Web Run 的内存状态（GIL 下引用读写安全；完成标志用 Event）。"""
 
     run_id: str
-    status: str = "running"  # running / completed / error / interrupted
+    status: str = "running"  # running / completed / failed / budget_exceeded / error
     error: str = ""
     result: object = None
     artifacts_dir: str = ""
@@ -43,8 +47,9 @@ class RunHandle:
     workspace: object = None
     manager: object = None
     handle: object = None
-    done = threading.Event()
-    events_queue_lock = threading.Lock()
+    # 评审 P0-1：必须是 field 工厂——类属性形式的 Event 会被所有 Run 共享，
+    # 第一个 Run 完成后后续 Run 的 SSE 会提前结束
+    done: threading.Event = field(default_factory=threading.Event)
     subscribers: list = field(default_factory=list)
 
 
@@ -68,7 +73,15 @@ class StartRequest(BaseModel):
 def _finish_run(run: RunHandle, result, artifacts_dir: str = "") -> None:
     run.result = result
     run.artifacts_dir = artifacts_dir
-    run.status = "completed" if result is not None else "error"
+    # 评审 P1：区分"执行结束"与"任务成功"——Runtime FAILED/BUDGET 不再显示绿色完成
+    if result is None:
+        run.status = "error"
+    elif result.runtime_status is RunStatus.COMPLETED:
+        run.status = "completed"
+    elif result.runtime_status is RunStatus.BUDGET_EXCEEDED:
+        run.status = "budget_exceeded"
+    else:
+        run.status = "failed"
     run.done.set()
 
 
@@ -132,6 +145,8 @@ def start_run(body: StartRequest):
         max_duration_seconds=body.timeout,
         review_enabled=body.review,
         output_dir=body.output_dir,
+        # 与 CLI 一致：Context Budget 生产启用（未知模型 resolve 返回 None 不虚构容量）
+        context_window_tokens=resolve_context_window(body.model),
     )
     task_spec = TaskSpec(
         instruction=instruction, repo_path=body.repo, base_commit=base_commit,
@@ -210,7 +225,12 @@ def get_patch(run_id: str):
 
 @app.get("/")
 def index():
-    web_page = Path(__file__).parent.parent.parent / "web" / "index.html"
-    if not web_page.exists():
-        raise HTTPException(status_code=404, detail="web/index.html not found")
-    return FileResponse(web_page, media_type="text/html")
+    # P2：优先包内资源（wheel 安装），回退仓库根（editable 安装）
+    candidates = [
+        Path(__file__).parent / "web" / "index.html",
+        Path(__file__).parent.parent.parent / "web" / "index.html",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return FileResponse(candidate, media_type="text/html")
+    raise HTTPException(status_code=404, detail="web/index.html not found")
