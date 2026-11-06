@@ -2,12 +2,16 @@
 
 三个组件（逻辑职责，可组合）：
 - EvalRunner：对每个任务启动独立 Run（经 CLI 装配或注入栈），收集候选 Patch 与 RunResult。
-- ResultJudge：干净工作区独立验收——Base Commit 重初始化 → 应用候选 Patch → 运行隐藏测试；
-  SUCCESS / FAILED / INCONCLUSIVE；**不用 Agent 工作区自验**（检验 Patch 可独立复现）。
-- MetricsAggregator：三层指标（业务效果 / 执行效率 / 运行可靠性），
-  统计口径成功率 = 独立验收成功数 / 有效且已尝试的可修复任务数（预算耗尽留在分母）。
+- ResultJudge：干净工作区独立验收——Base Commit 重初始化 → 装载 EvalTask.hidden_test_files
+  （仅评测器持有，不进 Agent 工作区，EV-01）→ 应用候选 Patch → **在受限容器内**运行隐藏测试
+  （评审 P0-1：不复用宿主 Python/环境变量——宿主密钥不进测试进程）→ 判定
+  SUCCESS / FAILED / INCONCLUSIVE。
+- MetricsAggregator：三层指标；统计口径对齐 design/09（评审 P0-2）：**有效且已尝试的任务
+  一律留在成功率分母**（INCONCLUSIVE 也不移出，单独报告数量），另报可判定样本上的
+  条件成功率作参考。
 """
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -19,6 +23,8 @@ from repofix.contracts import (
     RunResult,
     RunStatus,
 )
+
+DIFF_EXCLUDES = [":(exclude).pytest_cache", ":(exclude)__pycache__"]
 
 
 @dataclass
@@ -47,30 +53,59 @@ class EvalRecord:
     independent_apply_rc: int | None = None
     hidden_tests_rc: int | None = None
     patch_hash: str = ""
+    isolated_execution: bool = False  # P0-1：隐藏测试是否在容器内执行
 
 
 class ResultJudge:
-    """干净工作区独立验收（design/09 第三节）。"""
+    """干净工作区独立验收（design/09 第三节）。
 
-    def __init__(self, workspace_provider, python_exe: str | None = None):
-        # workspace_provider: 生成干净 Base 仓库的可调用（合成仓库时重建）
+    执行隔离（评审 P0-1）：hidden tests 默认在受限容器（repofix-env 镜像：
+    非 root / 无网络 / 最小环境变量）内运行，评测工作区与 Agent 工作区分离，
+    宿主 API Key 不进入测试进程。
+    """
+
+    def __init__(
+        self,
+        workspace_provider,
+        docker_cli=None,
+        image: str = "repofix-env:latest",
+        container_timeout: int = 300,
+    ):
         self._provider = workspace_provider
-        self._python = python_exe
+        self._docker_cli = docker_cli  # None = 容器不可用（仅测试降级路径）
+        self._image = image
+        self._container_timeout = container_timeout
 
-    def judge(self, task: EvalTask, patch_path, run_result: RunResult | None) -> EvalRecord:
-        """验收流程：干净 Base → git apply → 隐藏测试 → 判定。"""
+    def judge(self, task: EvalTask, patch_path, run_result: RunResult | None,
+              clean_provider=None) -> EvalRecord:
+        """验收流程：干净 Base → 装载隐藏测试 → git apply → 容器内隐藏测试 → 判定。
+
+        clean_provider：可覆盖构造期的 workspace_provider（按 task.base_commit 重建）。
+        """
         record = EvalRecord(task_id=task.task_id, run_id=run_result.run_id if run_result else "",
                             run_result=run_result)
-        import subprocess
-        # Runtime 必须正常完成（必要条件，非充分）
-        if run_result is None or run_result.runtime_status not in (RunStatus.COMPLETED,):
+        provider = clean_provider or self._provider
+
+        # Runtime 正常完成是必要条件（非充分）
+        if run_result is None or run_result.runtime_status is not RunStatus.COMPLETED:
             record.outcome = EvaluationOutcome.FAILED
             record.reason = f"runtime did not complete ({run_result.runtime_status.value if run_result else 'no run'})"
             return record
 
         tmp = Path(tempfile.mkdtemp(prefix=f"eval-{task.task_id}-"))
         try:
-            clean = self._provider(tmp)  # 干净 Base 仓库（重建）
+            clean = provider(tmp)
+            repo = _repo_dir(clean)
+
+            # P0-3：Base Commit 核对——provider 重建的仓库必须停在任务指定版本
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                                  capture_output=True, text=True, timeout=60)
+            if head.returncode != 0 or head.stdout.strip() != task.base_commit:
+                record.outcome = EvaluationOutcome.INCONCLUSIVE
+                record.reason = (f"clean workspace HEAD mismatch: "
+                                 f"{head.stdout.strip()[:12] or 'error'} != {task.base_commit[:12]}")
+                return record
+
             patch_text = ""
             if patch_path and Path(patch_path).exists():
                 patch_text = Path(patch_path).read_text(encoding="utf-8")
@@ -80,7 +115,7 @@ class ResultJudge:
                 return record
 
             patch_abs = str(Path(patch_path).resolve())
-            apply = subprocess.run(["git", "apply", patch_abs], cwd=repo_dir(clean),
+            apply = subprocess.run(["git", "apply", patch_abs], cwd=repo,
                                    capture_output=True, text=True, timeout=120)
             record.independent_apply_rc = apply.returncode
             if apply.returncode != 0:
@@ -88,19 +123,24 @@ class ResultJudge:
                 record.reason = f"patch does not apply on clean base: {apply.stderr.strip()[:200]}"
                 return record
 
-            env = base_env(clean)
-            test = subprocess.run(
-                [self._python or sys_executable(), "-m", "pytest", "-q", "--tb=no"],
-                cwd=repo_dir(clean), capture_output=True, text=True, timeout=300, env=env,
-            )
-            record.hidden_tests_rc = test.returncode
-            if test.returncode == 0:
+            # P0-3：装载 EvalTask 持有的隐藏测试（写入评测工作区——不进 Agent 工作区）
+            for rel_path, content in task.hidden_test_files.items():
+                target = repo / rel_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+
+            # P0-1：容器内执行隐藏测试（受限镜像、最小环境变量、不传宿主密钥）
+            record.isolated_execution = self._docker_cli is not None
+            test_rc, test_out = self._run_hidden_tests(repo)
+            record.hidden_tests_rc = test_rc
+            if test_rc == 0:
                 record.outcome = EvaluationOutcome.SUCCESS
                 record.reason = "hidden tests passed on independently applied patch"
             else:
                 record.outcome = EvaluationOutcome.FAILED
-                record.reason = f"hidden tests failed rc={test.returncode}"
+                record.reason = f"hidden tests failed rc={test_rc}"
                 record.regression_detected = True
+                _ = test_out
             return record
         except Exception as exc:  # noqa: BLE001 —— 评测设施异常 → INCONCLUSIVE（EV-04）
             record.outcome = EvaluationOutcome.INCONCLUSIVE
@@ -109,9 +149,41 @@ class ResultJudge:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def _run_hidden_tests(self, repo: Path) -> tuple[int, str]:
+        """在受限容器内运行隐藏测试；容器不可用时降级宿主执行（仅供测试路径），
+        并在 record.isolated_execution 上如实标记。"""
+        if self._docker_cli is not None:
+            from repofix.workspace.docker_cli import DockerCliError
+
+            name = f"eval-{tempfile.mkdtemp(prefix='n').split('n')[-1][:10]}"
+            try:
+                self._docker_cli.start_container(name, self._image, repo)
+                outcome = self._docker_cli.exec(
+                    name, ["python", "-m", "pytest", "-q", "--tb=no"],
+                    timeout=self._container_timeout, cwd_in_container="/workspace",
+                )
+                return outcome.returncode, outcome.stdout + outcome.stderr
+            except DockerCliError as exc:
+                raise RuntimeError(f"container execution failed: {exc}") from exc
+            finally:
+                self._docker_cli.remove_container(name, timeout=60)
+        # 降级路径（仅单元测试）：宿主执行但环境变量最小化——不复制 os.environ，
+        # 只传 PATH/SYSTEMROOT；宿主 API Key 等密钥不进入测试进程
+        import os
+
+        repo = _repo_dir(repo)
+        env = {"PATH": os.environ.get("PATH", ""),
+               "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+               "PYTHONPATH": str(repo)}
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "--tb=no"],
+            cwd=repo, capture_output=True, text=True, timeout=300, env=env,
+        )
+        return proc.returncode, proc.stdout + proc.stderr
+
 
 class MetricsAggregator:
-    """三层指标汇总（design/09 第五节）。"""
+    """三层指标汇总（design/09 第五节；评审 P0-2 对齐分母口径）。"""
 
     def __init__(self):
         self.records: list[EvalRecord] = []
@@ -120,26 +192,31 @@ class MetricsAggregator:
         self.records.append(record)
 
     def summary(self) -> dict:
-        """统计口径（design/09）：成功率分母 = 有效且已尝试的可修复任务——
-        Runtime 失败、预算耗尽都不移出分母；INCONCLUSIVE 单独报告（EV-03/04）。"""
+        """统计口径（design/09 + 评审 P0-2）：有效且已尝试的任务一律留在主要成功率
+        分母（INCONCLUSIVE 也不移出，单独报告数量与原因）；另报可判定样本上的
+        条件成功率作参考（不替代主口径）。"""
         total = len(self.records)
         outcomes = {}
         for r in self.records:
             outcomes[r.outcome.value] = outcomes.get(r.outcome.value, 0) + 1
         success = outcomes.get(EvaluationOutcome.SUCCESS.value, 0)
-        attempted = sum(1 for r in self.records
-                        if r.outcome != EvaluationOutcome.INCONCLUSIVE)
-        tokens = sum(r.run_result.token_usage.get("total", 0)
-                     for r in self.records if r.run_result)
+        inconclusive = outcomes.get(EvaluationOutcome.INCONCLUSIVE.value, 0)
+        # 主口径：全部有效已尝试任务（含 INCONCLUSIVE）
+        main_rate = round(success / total, 3) if total else 0.0
+        # 参考口径：仅可判定样本
+        decidable = total - inconclusive
+        conditional_rate = round(success / decidable, 3) if decidable else 0.0
         return {
             "total_tasks": total,
-            "attempted": attempted,
+            "attempted": total,
             "success": success,
-            "task_success_rate": round(success / attempted, 3) if attempted else 0.0,
+            "task_success_rate": main_rate,
+            "inconclusive": inconclusive,
+            "conditional_success_rate_on_decidable": conditional_rate,
             "outcomes": outcomes,
-            "inconclusive": outcomes.get(EvaluationOutcome.INCONCLUSIVE.value, 0),
             "regressions": sum(1 for r in self.records if r.regression_detected),
-            "total_tokens": tokens,
+            "total_tokens": sum(r.run_result.token_usage.get("total", 0)
+                                for r in self.records if r.run_result),
             "by_task": [
                 {"task_id": r.task_id, "run_id": r.run_id, "outcome": r.outcome.value,
                  "reason": r.reason[:200], "regression": r.regression_detected}
@@ -157,22 +234,9 @@ def to_evaluation_result(record: EvalRecord) -> EvaluationResult:
     )
 
 
-def repo_dir(clean_root: Path) -> Path:
+def _repo_dir(clean_root: Path) -> Path:
     """合成仓库 provider 生成的是根目录本身（含 .git）。"""
     if (clean_root / ".git").exists():
         return clean_root
     subdirs = [d for d in clean_root.iterdir() if d.is_dir()]
     return subdirs[0] if subdirs else clean_root
-
-
-def base_env(repo: Path) -> dict:
-    import os
-
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(repo)
-    return env
-
-
-def sys_executable() -> str:
-    return sys.executable
-

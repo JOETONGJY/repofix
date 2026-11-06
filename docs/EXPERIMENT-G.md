@@ -51,3 +51,17 @@ repofix run --repo <repo> --task "<task>" --test-command "python -m pytest -q --
 ```
 
 完整 Trace：`repofix-data/experiment-g/group-{a,b,bm}/runs/<run_id>/`（trajectory.jsonl / result.json / changes.patch / test-report.json）。
+
+
+## 追加：独立隐藏测试验收（评审 P0-3 闭环证据）
+
+评审后补跑 ResultJudge 真实隐藏验收（隔离容器内执行，`isolated=True`，宿主密钥不进测试进程）：
+
+| 任务 | 候选来源 | 应用 | 隐藏测试 | 结果 |
+| --- | --- | --- | --- | --- |
+| clamp | 组 B APPROVED Patch | 成功 | 通过（浮点/边界隐藏用例） | **SUCCESS** |
+| slugify | 组 B APPROVED Patch | 成功 | **失败**（Tab 字符未折叠——Agent 修复与 Reviewer 审查均未覆盖） | **FAILED（真实缺陷）** |
+
+**发现**：slugify 的修复只处理了空格，未处理任务契约中的 Tab 字符——可见测试、Reviewer 审查均未发现，独立隐藏测试验收抓到了这个真实缺陷。这验证了 design/09 的核心判断：**Reviewer APPROVED ≠ 修复正确，独立隐藏验收才是可信的成功判据**。评测隔离执行（非 root 容器、无宿主密钥）同时得到验证。
+
+证据：`repofix-data/m4-hidden-acceptance.json`（汇总）+ 两次 judge 的完整记录。

@@ -2,6 +2,7 @@
 
 零 Token：Agent Run 结果用构造的 RunResult；独立验收用真实 git + pytest。
 """
+import os
 import subprocess
 from pathlib import Path
 
@@ -40,10 +41,16 @@ def make_clean_repo(tmp: Path) -> Path:
     )
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(
-        ["git", "-c", "user.email=v@v", "-c", "user.name=v", "commit", "-q", "-m", "base"],
-        cwd=repo, check=True)
-    return repo
+    # 固定 commit 时间戳：相同内容 → 相同 head（ResultJudge 的 base_commit 核对依赖此确定性）
+    fixed_env = {"GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
+                 "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
+                 "GIT_AUTHOR_NAME": "v", "GIT_AUTHOR_EMAIL": "v@v",
+                 "GIT_COMMITTER_NAME": "v", "GIT_COMMITTER_EMAIL": "v@v",
+                 "PATH": os.environ.get("PATH", ""), "SYSTEMROOT": os.environ.get("SYSTEMROOT", "")}
+    subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=repo, check=True, env=fixed_env)
+    head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
+                          capture_output=True, text=True, check=True).stdout.strip()
+    return repo, head
 
 
 def write_patch(tmp: Path, name: str, old: str, new: str) -> Path:
@@ -65,11 +72,17 @@ def run_result(status=RunStatus.COMPLETED, verification=VerificationStatus.PASSE
     )
 
 
-def make_task() -> EvalTask:
+def make_task(base_commit: str) -> EvalTask:
+    hidden = (
+        "from auth import validate_password\n\n"
+        "def test_hidden_empty():\n    assert validate_password('') is False\n\n"
+        "def test_hidden_short():\n    assert validate_password('abc') is False\n\n"
+        "def test_hidden_ok():\n    assert validate_password('longenough') is True\n"
+    )
     return EvalTask(
-        task_id="task-auth-001", repo_source="synthetic", base_commit="base",
+        task_id="task-auth-001", repo_source="synthetic", base_commit=base_commit,
         instruction="Fix password validation", test_command="python -m pytest",
-        hidden_test_files={"tests/test_hidden.py": "..."},
+        hidden_test_files={"tests/test_hidden.py": hidden},
     )
 
 
@@ -77,35 +90,45 @@ class TestResultJudge:
     def test_ev02_success_reproducible(self, tmp_path):
         """EV-02：相同 Patch 在干净工作区（Base 重初始化）独立验收可复现。"""
         patch = write_patch(tmp_path, "fix.patch", "len(pw) >= 0", "len(pw) >= 8")
-        judge1 = ResultJudge(workspace_provider=make_clean_repo)
-        judge2 = ResultJudge(workspace_provider=make_clean_repo)
-        r1 = judge1.judge(make_task(), patch, run_result())
-        r2 = judge2.judge(make_task(), patch, run_result())
+        _, head = make_clean_repo(tmp_path)
+        # provider 每次 judge 重建全新干净仓库（design/09：Base 重初始化，互不污染）
+        judge1 = ResultJudge(workspace_provider=lambda tmp: make_clean_repo(tmp)[0])
+        judge2 = ResultJudge(workspace_provider=lambda tmp: make_clean_repo(tmp)[0])
+        task = make_task(head)
+        r1 = judge1.judge(task, patch, run_result())
+        r2 = judge2.judge(task, patch, run_result())
         assert r1.outcome is EvaluationOutcome.SUCCESS
         assert r2.outcome is EvaluationOutcome.SUCCESS  # 相同 Patch 相同环境结果一致
 
     def test_ev02_bad_patch_fails(self, tmp_path):
-        patch = write_patch(tmp_path, "bad.patch", "len(pw) >= 0", "len(pw) >= 0")  # 未修复
-        judge = ResultJudge(workspace_provider=make_clean_repo)
-        record = judge.judge(make_task(), patch, run_result())
-        # Patch 应用成功但隐藏测试仍失败（基线 Bug 未修复）
+        """"修复"与 Bug 相同（未真正修复）：应用成功但隐藏测试仍失败。"""
+        repo, head = make_clean_repo(tmp_path)
+        patch = write_patch(tmp_path, "bad.patch", "len(pw) >= 0", "len(pw) >= 0")
+        judge = ResultJudge(workspace_provider=lambda tmp: repo)
+        record = judge.judge(make_task(head), patch, run_result(),
+                             clean_provider=lambda tmp: repo)
         assert record.outcome is EvaluationOutcome.FAILED
         assert record.hidden_tests_rc != 0
 
     def test_empty_patch_delivery_failure(self, tmp_path):
         """评审 P1：空 Patch 是交付失败，不伪装成功。"""
+        repo, head = make_clean_repo(tmp_path)
         empty = tmp_path / "empty.patch"
         empty.write_text("", encoding="utf-8")
-        judge = ResultJudge(workspace_provider=make_clean_repo)
-        record = judge.judge(make_task(), empty, run_result())
+        judge = ResultJudge(workspace_provider=lambda tmp: repo)
+        record = judge.judge(make_task(head), empty, run_result(),
+                             clean_provider=lambda tmp: repo)
         assert record.outcome is EvaluationOutcome.FAILED
         assert "empty" in record.reason
 
     def test_runtime_incomplete_stays_in_denominator(self, tmp_path):
         """EV-03：预算耗尽（未完成）的任务 FAILED 但留在分母。"""
+        repo, head = make_clean_repo(tmp_path)
         patch = write_patch(tmp_path, "x.patch", "len(pw) >= 0", "len(pw) >= 8")
-        judge = ResultJudge(workspace_provider=make_clean_repo)
-        record = judge.judge(make_task(), patch, run_result(status=RunStatus.BUDGET_EXCEEDED))
+        judge = ResultJudge(workspace_provider=lambda tmp: repo)
+        record = judge.judge(make_task(head), patch,
+                             run_result(status=RunStatus.BUDGET_EXCEEDED),
+                             clean_provider=lambda tmp: repo)
         assert record.outcome is EvaluationOutcome.FAILED
         assert "did not complete" in record.reason
 
@@ -115,8 +138,10 @@ class TestResultJudge:
         def broken_provider(tmp):
             raise RuntimeError("disk full")
 
-        judge = ResultJudge(workspace_provider=broken_provider)
-        record = judge.judge(make_task(), tmp_path / "any.patch", run_result())
+        repo, head = make_clean_repo(tmp_path)
+        judge = ResultJudge(workspace_provider=make_clean_repo)
+        record = judge.judge(make_task(head), tmp_path / "any.patch", run_result(),
+                             clean_provider=broken_provider)
         assert record.outcome is EvaluationOutcome.INCONCLUSIVE
         assert "infrastructure" in record.reason
 
@@ -137,10 +162,11 @@ class TestMetricsAggregator:
         agg.add(self._record("t4", EvaluationOutcome.INCONCLUSIVE))  # 设施异常
         summary = agg.summary()
         assert summary["total_tasks"] == 4
-        assert summary["attempted"] == 3  # INCONCLUSIVE 移出分母
+        assert summary["attempted"] == 4  # 评审 P0-2：INCONCLUSIVE 留在分母（design/09）
         assert summary["success"] == 1
-        assert summary["task_success_rate"] == round(1 / 3, 3)
-        assert summary["inconclusive"] == 1
+        assert summary["task_success_rate"] == 0.25  # 主口径：1/4
+        assert summary["inconclusive"] == 1  # 单独报告数量
+        assert summary["conditional_success_rate_on_decidable"] == 0.333  # 参考口径 1/3（可判定样本）
         assert summary["total_tokens"] == 400
 
     def test_ev05_experiment_groups_recorded(self):
@@ -157,7 +183,7 @@ class TestMetricsAggregator:
 
     def test_ev01_hidden_tests_not_in_agent_workspace(self, sample_repo, tmp_path):
         """EV-01：隐藏测试文件不进 Agent 工作区——EvalTask 契约隔离验证。"""
-        task = make_task()
+        task = make_task("a" * 64)
         # Agent 可见的 TaskSpec 只有 visible 信息；hidden_test_files 仅评测器持有
         agent_visible = {"instruction": task.instruction, "test_command": task.test_command}
         assert all("hidden" not in str(v) for v in agent_visible.values())
