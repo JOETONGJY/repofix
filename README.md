@@ -193,6 +193,20 @@ CLI 接收任务 + 仓库 + 运行配置
 
 设置 C 组的原因：B 的总预算天然高于 A，B 更好可能只因推理资源更多。只有预算匹配对照才能回答——**独立审查的价值是否超过单纯增加推理预算**。即使实验结论是 Reviewer 收益小于成本，也是有效的工程结论（据此回退单 Agent 基线），而非项目失败。目前所有指标均为定义，实际数值以实验数据为准。
 
+### SWE-bench Lite Mini-Eval（constrained subset，实测）
+
+在 SWE-bench Lite 上做了一轮小规模真实 Issue 评测：从 300 题按冻结规则（pytest 判定协议、单文件 gold patch、环境可运行等）筛出 **10 个不同仓库的 8 题 + 1 题 dev 预演**，自实现官方评测协议判定器（官方 per-instance Docker 镜像内、干净 base 独立应用 Patch，FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归才算 Resolved；gold patch 校准全部通过）。deepseek-flash（Non-thinking），单次运行，失败不重跑不换题。完整报告见 [docs/BENCHMARK-MINI.md](docs/BENCHMARK-MINI.md)。
+
+| 维度 | 结果 |
+| --- | --- |
+| Resolved@1（600k token/题 档） | **2/8（25%）**，零 P2P 回归 |
+| Patch Apply Rate | 5/8 |
+| 预算标度（60k/200k/600k/1M 每题） | 0 → 1 → 2 → 2（600k 后收益饱和，瓶颈转移到模型 diff 生成能力） |
+| 无工具 API 对照（同信息量、同预算） | 1/8 —— Agent 净增益 +1 解决、patch 可用率高一个数量级 |
+| 成本结构 | prompt 累积占总消耗 ~98%（上下文效率即 Agent 效率） |
+
+> 范围声明：本结果为 **SWE-bench Lite constrained subset**（pytest 协议 + 单文件 + 环境可运行筛选后的固定子集，n=8 单次运行），不代表 SWE-bench Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，不改动核心 Harness（仅 `DockerWorkspace` 增加挂载点参数）。
+
 ---
 
 ## 快速开始

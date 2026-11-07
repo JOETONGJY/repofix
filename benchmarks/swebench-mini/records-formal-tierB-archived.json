@@ -1,0 +1,265 @@
+[
+  {
+    "instance_id": "scikit-learn__scikit-learn-10297",
+    "repo": "scikit-learn/scikit-learn",
+    "agent": {
+      "run_id": "run_scikit-learn__scikit-learn-10297",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 12,
+      "tool_calls": 13,
+      "token_usage": {
+        "prompt": 61823,
+        "completion": 958,
+        "total": 62781
+      },
+      "duration_ms": 16061,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 297.3,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "official install commands failed: ['python -m pip install -v --no-use-pep517 --no-build-isolation -e .']",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\scikit-learn__scikit-learn-10297"
+  },
+  {
+    "instance_id": "matplotlib__matplotlib-18869",
+    "repo": "matplotlib/matplotlib",
+    "resolved": false,
+    "agent_seconds": 177.1,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "RuntimeError: install commands failed for matplotlib__matplotlib-18869: ['python -m pip install -e .']",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\matplotlib__matplotlib-18869"
+  },
+  {
+    "instance_id": "sphinx-doc__sphinx-10325",
+    "repo": "sphinx-doc/sphinx",
+    "agent": {
+      "run_id": "run_sphinx-doc__sphinx-10325",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 12,
+      "tool_calls": 14,
+      "token_usage": {
+        "prompt": 60493,
+        "completion": 986,
+        "total": 61479
+      },
+      "duration_ms": 38893,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 159.7,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "no test statuses parsed and test command failed; parser or env mismatch",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\sphinx-doc__sphinx-10325"
+  },
+  {
+    "instance_id": "pytest-dev__pytest-11143",
+    "repo": "pytest-dev/pytest",
+    "agent": {
+      "run_id": "run_pytest-dev__pytest-11143",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 9,
+      "tool_calls": 11,
+      "token_usage": {
+        "prompt": 59900,
+        "completion": 987,
+        "total": 60887
+      },
+      "duration_ms": 13351,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 28.0,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "no test statuses parsed and test command failed; parser or env mismatch",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pytest-dev__pytest-11143"
+  },
+  {
+    "instance_id": "pylint-dev__pylint-5859",
+    "repo": "pylint-dev/pylint",
+    "agent": {
+      "run_id": "run_pylint-dev__pylint-5859",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [
+        "./pylint/checkers/misc.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 10,
+      "tool_calls": 11,
+      "token_usage": {
+        "prompt": 59816,
+        "completion": 1931,
+        "total": 61747
+      },
+      "duration_ms": 42772,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 55.7,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "no test statuses parsed and test command failed; parser or env mismatch",
+      "patch_applied": true,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pylint-dev__pylint-5859"
+  },
+  {
+    "instance_id": "mwaskom__seaborn-2848",
+    "repo": "mwaskom/seaborn",
+    "agent": {
+      "run_id": "run_mwaskom__seaborn-2848",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 14,
+      "tool_calls": 19,
+      "token_usage": {
+        "prompt": 66131,
+        "completion": 1399,
+        "total": 67530
+      },
+      "duration_ms": 22047,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 26.8,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "no test statuses parsed and test command failed; parser or env mismatch",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\mwaskom__seaborn-2848"
+  },
+  {
+    "instance_id": "pydata__xarray-3364",
+    "repo": "pydata/xarray",
+    "agent": {
+      "run_id": "run_pydata__xarray-3364",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 11,
+      "tool_calls": 13,
+      "token_usage": {
+        "prompt": 67594,
+        "completion": 769,
+        "total": 68363
+      },
+      "duration_ms": 22039,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 46.0,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "no test statuses parsed and test command failed; parser or env mismatch",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
+  },
+  {
+    "instance_id": "pallets__flask-4992",
+    "repo": "pallets/flask",
+    "agent": {
+      "run_id": "run_pallets__flask-4992",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [
+        "src/flask/config.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 12,
+      "tool_calls": 13,
+      "token_usage": {
+        "prompt": 61542,
+        "completion": 3448,
+        "total": 64990
+      },
+      "duration_ms": 29532,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 56.2,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "no test statuses parsed and test command failed; parser or env mismatch",
+      "patch_applied": true,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pallets__flask-4992"
+  }
+]

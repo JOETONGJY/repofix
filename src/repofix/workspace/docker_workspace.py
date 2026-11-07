@@ -106,6 +106,7 @@ class DockerWorkspace:
         container_name: str | None = None,
         read_only: bool = False,
         command_timeout_seconds: int = 120,
+        workspace_mount: str = CONTAINER_WORKSPACE_MOUNT,
     ):
         self.task_dir = Path(task_dir)
         self.run_id = run_id
@@ -115,6 +116,8 @@ class DockerWorkspace:
         self.container_name = container_name or f"repofix-{run_id}"
         self.read_only = read_only
         self._command_timeout = command_timeout_seconds
+        # 容器内工作区挂载点：默认 /workspace；SWE-bench 评测挂官方镜像的 /testbed
+        self._mount = workspace_mount
         self._container_up = False
         self._full_outputs: dict[str, tuple[str, str]] = {}
 
@@ -171,6 +174,7 @@ class DockerWorkspace:
             self.task_dir, self.run_id, base_commit=self.base_commit,
             cli=self._cli, container_name=self.container_name,
             read_only=True, command_timeout_seconds=self._command_timeout,
+            workspace_mount=self._mount,
         )
         readonly._container_up = self._container_up  # noqa: SL001 —— 同进程受控共享
         return readonly
@@ -216,7 +220,7 @@ class DockerWorkspace:
         rel = display_rel(self.task_dir, search_root)
         argv = build_rg_argv(pattern, rel, regex, glob, limit)
         try:
-            outcome = self._run_in_container(argv, cwd_in_container=CONTAINER_WORKSPACE_MOUNT,
+            outcome = self._run_in_container(argv, cwd_in_container=self._mount,
                                              timeout=self._command_timeout)
         except ExecutorCrashError:
             raise
@@ -352,7 +356,7 @@ class DockerWorkspace:
             return ToolResult(call_id=call_id, status=ExecutionStatus.FAILED,
                               error_code=ToolErrorCode.INVALID_ARGUMENT, error_message=str(exc))
         cwd_rel = display_rel(self.task_dir, cwd_abs)
-        container_cwd = CONTAINER_WORKSPACE_MOUNT if cwd_rel == "." else f"{CONTAINER_WORKSPACE_MOUNT}/{cwd_rel}"
+        container_cwd = self._mount if cwd_rel == "." else f"{self._mount}/{cwd_rel}"
         timeout = min(timeout_seconds or self._command_timeout, 600)
         started_rc, stdout, stderr = None, "", ""
         try:

@@ -1,0 +1,243 @@
+[
+  {
+    "instance_id": "scikit-learn__scikit-learn-10297",
+    "repo": "scikit-learn/scikit-learn",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 292385,
+        "prompt": 292385,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 115.3,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 30 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "sklearn/linear_model/tests/test_ridge.py::test_ridge_classifier_cv_store_cv_values"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 30
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\scikit-learn__scikit-learn-10297"
+  },
+  {
+    "instance_id": "matplotlib__matplotlib-18869",
+    "repo": "matplotlib/matplotlib",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 268777,
+        "prompt": 268777,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 75.3,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 4/4; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 8 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0-version_tuple0]",
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0rc2-version_tuple1]",
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0.dev820+g6768ef8c4c-version_tuple2]",
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0.post820+g6768ef8c4c-version_tuple3]"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 8
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\matplotlib__matplotlib-18869"
+  },
+  {
+    "instance_id": "sphinx-doc__sphinx-10325",
+    "repo": "sphinx-doc/sphinx",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 244573,
+        "prompt": 244573,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 246.4,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 1 statuses parsed)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "tests/test_ext_autodoc_automodule.py::test_automodule_inherited_members"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 1
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\sphinx-doc__sphinx-10325"
+  },
+  {
+    "instance_id": "pytest-dev__pytest-11143",
+    "repo": "pytest-dev/pytest",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 344352,
+        "prompt": 344352,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 91.9,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 140 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "testing/test_assertrewrite.py::TestIssue11140::test_constant_not_picked_as_module_docstring"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 140
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pytest-dev__pytest-11143"
+  },
+  {
+    "instance_id": "pylint-dev__pylint-5859",
+    "repo": "pylint-dev/pylint",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 106429,
+        "prompt": 106429,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 136.8,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 11 statuses parsed)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "tests/checkers/unittest_misc.py::TestFixme::test_non_alphanumeric_codetag"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 11
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pylint-dev__pylint-5859"
+  },
+  {
+    "instance_id": "pallets__flask-4992",
+    "repo": "pallets/flask",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 273299,
+        "prompt": 273299,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 163.7,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 19 statuses parsed)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "tests/test_config.py::test_config_from_file_toml"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 19
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pallets__flask-4992"
+  },
+  {
+    "instance_id": "mwaskom__seaborn-2848",
+    "repo": "mwaskom/seaborn",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 232702,
+        "prompt": 232702,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 113.9,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 73 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "tests/test_relational.py::TestScatterPlotter::test_hue_order"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 73
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\mwaskom__seaborn-2848"
+  },
+  {
+    "instance_id": "pydata__xarray-3364",
+    "repo": "pydata/xarray",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "rounds_exhausted:40",
+      "model_calls": 40,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 267141,
+        "prompt": 267141,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 217.2,
+    "judge": {
+      "outcome": "RESOLVED",
+      "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+      "patch_applied": true,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "statuses_count": 2
+    },
+    "resolved": true,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
+  }
+]

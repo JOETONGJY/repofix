@@ -1,0 +1,63 @@
+[
+  {
+    "instance_id": "mwaskom__seaborn-2848",
+    "repo": "mwaskom/seaborn",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "error:ModelProtocolError: response truncated by max_tokens (finish_reason=length); partial output rejected",
+      "model_calls": 5,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 35814,
+        "prompt": 35814,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 21.9,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 73 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "tests/test_relational.py::TestScatterPlotter::test_hue_order"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 73
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\mwaskom__seaborn-2848"
+  },
+  {
+    "instance_id": "pydata__xarray-3364",
+    "repo": "pydata/xarray",
+    "arm": "control_no_tools",
+    "agent": {
+      "runtime_status": "FAILED",
+      "termination_reason": "error:ModelProtocolError: response truncated by max_tokens (finish_reason=length); partial output rejected",
+      "model_calls": 11,
+      "tool_calls": 0,
+      "token_usage": {
+        "total": 81280,
+        "prompt": 81280,
+        "completion": 0
+      },
+      "modified_files": []
+    },
+    "agent_seconds": 74.8,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 2/2; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 113 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "xarray/tests/test_combine.py::TestAutoCombineOldAPI::test_auto_combine_with_new_variables",
+        "xarray/tests/test_concat.py::TestConcatDataset::test_concat_merge_variables_present_in_some_datasets"
+      ],
+      "p2p_regressions": [],
+      "statuses_count": 113
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
+  }
+]

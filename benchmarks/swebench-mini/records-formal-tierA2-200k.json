@@ -1,0 +1,374 @@
+[
+  {
+    "instance_id": "matplotlib__matplotlib-18869",
+    "repo": "matplotlib/matplotlib",
+    "agent": {
+      "run_id": "run_matplotlib__matplotlib-18869",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 18,
+      "tool_calls": 22,
+      "token_usage": {
+        "prompt": 195206,
+        "completion": 19050,
+        "total": 214256
+      },
+      "duration_ms": 125307,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 538.9,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "no patch produced: agent terminated before any applicable edit (budget_exhausted:max_total_tokens)",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 1,
+          "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+          "tail": "\n  note: This error originates from a subprocess, and is likely not a problem with pip.\nerror: metadata-generation-failed\n\n× Encountered error while generating package metadata.\n╰─> See above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n"
+        }
+      ],
+      "statuses_count": 0
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\matplotlib__matplotlib-18869"
+  },
+  {
+    "instance_id": "scikit-learn__scikit-learn-10297",
+    "repo": "scikit-learn/scikit-learn",
+    "agent": {
+      "run_id": "run_scikit-learn__scikit-learn-10297_2e56fb",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 20,
+      "tool_calls": 21,
+      "token_usage": {
+        "prompt": 204129,
+        "completion": 3658,
+        "total": 207787
+      },
+      "duration_ms": 40689,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 319.3,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "no patch produced: agent terminated before any applicable edit (budget_exhausted:max_total_tokens)",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -v --no-use-pep517 --no-build-isolation -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 1,
+          "fallback_command": "python -m pip install -v --no-use-pep517 --no-build-isolation -e . --no-build-isolation --no-deps",
+          "tail": "caller>\", \"exec\"))' egg_info --egg-base /tmp/pip-pip-egg-info-w_3fw5jg\n  cwd: /testbed/\nerror: metadata-generation-failed\n\n× Encountered error while generating package metadata.\n╰─> See above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n"
+        }
+      ],
+      "statuses_count": 0
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\scikit-learn__scikit-learn-10297"
+  },
+  {
+    "instance_id": "sphinx-doc__sphinx-10325",
+    "repo": "sphinx-doc/sphinx",
+    "agent": {
+      "run_id": "run_sphinx-doc__sphinx-10325_06e9fb",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 25,
+      "tool_calls": 28,
+      "token_usage": {
+        "prompt": 205273,
+        "completion": 1959,
+        "total": 207232
+      },
+      "duration_ms": 58661,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 149.3,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "no patch produced: agent terminated before any applicable edit (budget_exhausted:max_total_tokens)",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .[test]",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 0,
+          "fallback_command": "python -m pip install -e .[test] --no-build-isolation --no-deps",
+          "tail": "g setup.py develop for Sphinx\nSuccessfully installed Sphinx-5.0.0.dev20261107\nWARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv\n"
+        }
+      ],
+      "statuses_count": 0
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\sphinx-doc__sphinx-10325"
+  },
+  {
+    "instance_id": "pytest-dev__pytest-11143",
+    "repo": "pytest-dev/pytest",
+    "agent": {
+      "run_id": "run_pytest-dev__pytest-11143_a43f68",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [
+        "src/_pytest/assertion/rewrite.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 20,
+      "tool_calls": 22,
+      "token_usage": {
+        "prompt": 199764,
+        "completion": 4637,
+        "total": 204401
+      },
+      "duration_ms": 41026,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 55.3,
+    "judge": {
+      "outcome": "RESOLVED",
+      "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+      "patch_applied": true,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 0,
+          "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+          "tail": "rmissions and conflicting behaviour with the system package manager, possibly rendering your system unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 139,
+      "test_output_tail": "y\nPASSED testing/test_assertrewrite.py::TestReprSizeVerbosity::test_increased_verbosity\nPASSED testing/test_assertrewrite.py::TestReprSizeVerbosity::test_max_increased_verbosity\nPASSED testing/test_assertrewrite.py::TestIssue11140::test_constant_not_picked_as_module_docstring\nPASSED testing/test_assertrewrite.py::TestAssertionRewrite::test_dont_rewrite_plugin\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_dont_write_bytecode\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_cached_pyc_includes_pytest_version\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_pyc_vs_pyo\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_warning\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_module_imported_from_conftest\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_warning_using_pytest_plugins\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_warning_using_pytest_plugins_env_var\nPASSED testing/test_assertrewrite.py::TestAssertionRewriteHookDetails::test_resources_provider_for_loader\n============================= 116 passed in 17.36s =============================\n\n"
+    },
+    "resolved": true,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pytest-dev__pytest-11143"
+  },
+  {
+    "instance_id": "pylint-dev__pylint-5859",
+    "repo": "pylint-dev/pylint",
+    "agent": {
+      "run_id": "run_pylint-dev__pylint-5859_5429e6",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 25,
+      "tool_calls": 28,
+      "token_usage": {
+        "prompt": 200851,
+        "completion": 5346,
+        "total": 206197
+      },
+      "duration_ms": 56737,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 65.0,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "no patch produced: agent terminated before any applicable edit (budget_exhausted:max_total_tokens)",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 0,
+          "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+          "tail": "Running setup.py develop for pylint\nSuccessfully installed pylint-2.13.0.dev0\nWARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv\n"
+        }
+      ],
+      "statuses_count": 0
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pylint-dev__pylint-5859"
+  },
+  {
+    "instance_id": "mwaskom__seaborn-2848",
+    "repo": "mwaskom/seaborn",
+    "agent": {
+      "run_id": "run_mwaskom__seaborn-2848_5c4e45",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 20,
+      "tool_calls": 23,
+      "token_usage": {
+        "prompt": 202219,
+        "completion": 2644,
+        "total": 204863
+      },
+      "duration_ms": 32172,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 37.4,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "no patch produced: agent terminated before any applicable edit (budget_exhausted:max_total_tokens)",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .[dev]",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 0,
+          "fallback_command": "python -m pip install -e .[dev] --no-build-isolation --no-deps",
+          "tail": "nning setup.py develop for seaborn\nSuccessfully installed seaborn-0.12.0.dev0\nWARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv\n"
+        }
+      ],
+      "statuses_count": 0
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\mwaskom__seaborn-2848"
+  },
+  {
+    "instance_id": "pydata__xarray-3364",
+    "repo": "pydata/xarray",
+    "agent": {
+      "run_id": "run_pydata__xarray-3364_f608b7",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [
+        "xarray/core/concat.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 21,
+      "tool_calls": 26,
+      "token_usage": {
+        "prompt": 207079,
+        "completion": 4774,
+        "total": 211853
+      },
+      "duration_ms": 40919,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 55.3,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 2/2; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 113 statuses parsed)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "xarray/tests/test_combine.py::TestAutoCombineOldAPI::test_auto_combine_with_new_variables",
+        "xarray/tests/test_concat.py::TestConcatDataset::test_concat_merge_variables_present_in_some_datasets"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 0,
+          "mode": "official",
+          "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 113,
+      "test_output_tail": "PASSED xarray/tests/test_concat.py::TestConcatDataset::test_concat_fill_value[fill_value0]\nPASSED xarray/tests/test_concat.py::TestConcatDataset::test_concat_fill_value[2]\nPASSED xarray/tests/test_concat.py::TestConcatDataset::test_concat_fill_value[2.0]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_encoding\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_lazy\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_fill_value[fill_value0]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_fill_value[2]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_fill_value[2.0]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_join_kwarg\nXFAIL xarray/tests/test_combine.py::TestNestedCombine::test_nested_concat_too_many_dims_at_once\nFAILED xarray/tests/test_combine.py::TestAutoCombineOldAPI::test_auto_combine_with_new_variables\nFAILED xarray/tests/test_concat.py::TestConcatDataset::test_concat_merge_variables_present_in_some_datasets\n=========== 2 failed, 110 passed, 1 xfailed, 108 warnings in 12.76s ============\n\n"
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
+  },
+  {
+    "instance_id": "pallets__flask-4992",
+    "repo": "pallets/flask",
+    "agent": {
+      "run_id": "run_pallets__flask-4992_4bf397",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [
+        "src/flask/config.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 24,
+      "tool_calls": 26,
+      "token_usage": {
+        "prompt": 195154,
+        "completion": 6872,
+        "total": 202026
+      },
+      "duration_ms": 49611,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 68.6,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 19 statuses parsed)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "tests/test_config.py::test_config_from_file_toml"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 0,
+          "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+          "tail": "rmissions and conflicting behaviour with the system package manager, possibly rendering your system unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 19,
+      "test_output_tail": "=========\nPASSED tests/test_config.py::test_config_from_pyfile\nPASSED tests/test_config.py::test_config_from_object\nPASSED tests/test_config.py::test_config_from_file_json\nPASSED tests/test_config.py::test_from_prefixed_env\nPASSED tests/test_config.py::test_from_prefixed_env_custom_prefix\nPASSED tests/test_config.py::test_from_prefixed_env_nested\nPASSED tests/test_config.py::test_config_from_mapping\nPASSED tests/test_config.py::test_config_from_class\nPASSED tests/test_config.py::test_config_from_envvar\nPASSED tests/test_config.py::test_config_from_envvar_missing\nPASSED tests/test_config.py::test_config_missing\nPASSED tests/test_config.py::test_config_missing_file\nPASSED tests/test_config.py::test_custom_config_class\nPASSED tests/test_config.py::test_session_lifetime\nPASSED tests/test_config.py::test_get_namespace\nPASSED tests/test_config.py::test_from_pyfile_weird_encoding[utf-8]\nPASSED tests/test_config.py::test_from_pyfile_weird_encoding[iso-8859-15]\nPASSED tests/test_config.py::test_from_pyfile_weird_encoding[latin-1]\nFAILED tests/test_config.py::test_config_from_file_toml - TypeError: Config.f...\n========================= 1 failed, 18 passed in 0.67s =========================\n\n"
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pallets__flask-4992"
+  }
+]

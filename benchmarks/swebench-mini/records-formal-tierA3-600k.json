@@ -1,0 +1,385 @@
+[
+  {
+    "instance_id": "pytest-dev__pytest-11143",
+    "repo": "pytest-dev/pytest",
+    "agent": {
+      "run_id": "run_pytest-dev__pytest-11143_a43f68",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [
+        "src/_pytest/assertion/rewrite.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 20,
+      "tool_calls": 22,
+      "token_usage": {
+        "prompt": 199764,
+        "completion": 4637,
+        "total": 204401
+      },
+      "duration_ms": 41026,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 55.3,
+    "judge": {
+      "outcome": "RESOLVED",
+      "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+      "patch_applied": true,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 0,
+          "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+          "tail": "rmissions and conflicting behaviour with the system package manager, possibly rendering your system unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 139,
+      "test_output_tail": "y\nPASSED testing/test_assertrewrite.py::TestReprSizeVerbosity::test_increased_verbosity\nPASSED testing/test_assertrewrite.py::TestReprSizeVerbosity::test_max_increased_verbosity\nPASSED testing/test_assertrewrite.py::TestIssue11140::test_constant_not_picked_as_module_docstring\nPASSED testing/test_assertrewrite.py::TestAssertionRewrite::test_dont_rewrite_plugin\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_dont_write_bytecode\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_cached_pyc_includes_pytest_version\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_pyc_vs_pyo\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_warning\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_module_imported_from_conftest\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_warning_using_pytest_plugins\nPASSED testing/test_assertrewrite.py::TestRewriteOnImport::test_rewrite_warning_using_pytest_plugins_env_var\nPASSED testing/test_assertrewrite.py::TestAssertionRewriteHookDetails::test_resources_provider_for_loader\n============================= 116 passed in 17.36s =============================\n\n"
+    },
+    "resolved": true,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pytest-dev__pytest-11143"
+  },
+  {
+    "instance_id": "scikit-learn__scikit-learn-10297",
+    "repo": "scikit-learn/scikit-learn",
+    "agent": {
+      "run_id": "run_scikit-learn__scikit-learn-10297_b33b9c",
+      "runtime_status": "completed",
+      "termination_reason": "finish_accepted",
+      "verification_status": "passed",
+      "modified_files": [
+        "sklearn/linear_model/ridge.py",
+        "sklearn/linear_model/tests/test_ridge.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 21,
+      "tool_calls": 21,
+      "token_usage": {
+        "prompt": 232818,
+        "completion": 3850,
+        "total": 236668
+      },
+      "duration_ms": 67593,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 331.2,
+    "judge": {
+      "outcome": "RESOLVED",
+      "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+      "patch_applied": true,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -v --no-use-pep517 --no-build-isolation -e .",
+          "rc": 0,
+          "mode": "official",
+          "tail": "s the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv\n"
+        }
+      ],
+      "statuses_count": 30,
+      "test_output_tail": "_model/tests/test_ridge.py::test_ridgecv_sample_weight\nPASSED sklearn/linear_model/tests/test_ridge.py::test_raises_value_error_if_sample_weights_greater_than_1d\nPASSED sklearn/linear_model/tests/test_ridge.py::test_sparse_design_with_sample_weights\nPASSED sklearn/linear_model/tests/test_ridge.py::test_raises_value_error_if_solver_not_supported\nPASSED sklearn/linear_model/tests/test_ridge.py::test_sparse_cg_max_iter\nPASSED sklearn/linear_model/tests/test_ridge.py::test_n_iter\nPASSED sklearn/linear_model/tests/test_ridge.py::test_ridge_fit_intercept_sparse\nPASSED sklearn/linear_model/tests/test_ridge.py::test_errors_and_values_helper\nPASSED sklearn/linear_model/tests/test_ridge.py::test_errors_and_values_svd_helper\nPASSED sklearn/linear_model/tests/test_ridge.py::test_ridge_classifier_no_support_multilabel\nPASSED sklearn/linear_model/tests/test_ridge.py::test_dtype_match\nPASSED sklearn/linear_model/tests/test_ridge.py::test_dtype_match_cholesky\nXFAIL sklearn/linear_model/tests/test_ridge.py::test_dense_sparse\n  reason: [NOTRUN] yield tests were removed in pytest 4.0 - test_dense_sparse will be ignored\n================= 29 passed, 1 xfailed, 22 warnings in 10.05s ==================\n\n"
+    },
+    "resolved": true,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\scikit-learn__scikit-learn-10297"
+  },
+  {
+    "instance_id": "matplotlib__matplotlib-18869",
+    "repo": "matplotlib/matplotlib",
+    "agent": {
+      "run_id": "run_matplotlib__matplotlib-18869_3aa8ed",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [
+        "lib/matplotlib/__init__.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 46,
+      "tool_calls": 50,
+      "token_usage": {
+        "prompt": 587877,
+        "completion": 14253,
+        "total": 602130
+      },
+      "duration_ms": 174587,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 610.2,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "test collection/import failed with the applied patch (broken patch); no per-test statuses (rc=4)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0-version_tuple0]",
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0rc2-version_tuple1]",
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0.dev820+g6768ef8c4c-version_tuple2]",
+        "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0.post820+g6768ef8c4c-version_tuple3]"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 0,
+          "mode": "official",
+          "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 0,
+      "test_output_tail": ""
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\matplotlib__matplotlib-18869"
+  },
+  {
+    "instance_id": "sphinx-doc__sphinx-10325",
+    "repo": "sphinx-doc/sphinx",
+    "agent": {
+      "run_id": "run_sphinx-doc__sphinx-10325_dcc567",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 41,
+      "tool_calls": 51,
+      "token_usage": {
+        "prompt": 606974,
+        "completion": 8560,
+        "total": 615534
+      },
+      "duration_ms": 112339,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 195.9,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 1 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "tests/test_ext_autodoc_automodule.py::test_automodule_inherited_members"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .[test]",
+          "rc": 0,
+          "mode": "official",
+          "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 1,
+      "test_output_tail": "ext_autodoc_automodule.py::test_subclass_of_mocked_object\n0.07s setup    tests/test_ext_autodoc_automodule.py::test_automodule_inherited_members\n0.05s call     tests/test_ext_autodoc_automodule.py::test_empty_all\n0.04s call     tests/test_ext_autodoc_automodule.py::test_automodule_undoc_members\n0.03s call     tests/test_ext_autodoc_automodule.py::test_subclass_of_mocked_object\n0.02s call     tests/test_ext_autodoc_automodule.py::test_automodule_special_members\n\n(6 durations < 0.005s hidden.  Use -vv to show these durations.)\n\u001b[36m\u001b[1m=========================== short test summary info ============================\u001b[0m\n\u001b[31mFAILED\u001b[0m tests/test_ext_autodoc_automodule.py::\u001b[1mtest_automodule_inherited_members\u001b[0m - AssertionError: assert ['', '.. py:m...ritance', ...] == ['', '.. py:m...ri...\n\u001b[31m========================= \u001b[31m\u001b[1m1 failed\u001b[0m, \u001b[32m5 passed\u001b[0m\u001b[31m in 13.48s\u001b[0m\u001b[31m =========================\u001b[0m\npy39: exit 1 (17.82 seconds) /testbed> python -X dev -m pytest --durations 25 tests/roots/test-ext-autodoc/target/inheritance.py tests/test_ext_autodoc_automodule.py pid=32\n  py39: FAIL code 1 (17.91=setup[0.09]+cmd[17.82] seconds)\n  evaluation failed :( (18.04 seconds)\n\n"
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\sphinx-doc__sphinx-10325"
+  },
+  {
+    "instance_id": "pylint-dev__pylint-5859",
+    "repo": "pylint-dev/pylint",
+    "agent": {
+      "run_id": "run_pylint-dev__pylint-5859_76026f",
+      "runtime_status": "failed",
+      "termination_reason": "no_progress",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 43,
+      "tool_calls": 45,
+      "token_usage": {
+        "prompt": 506082,
+        "completion": 11553,
+        "total": 517635
+      },
+      "duration_ms": 102132,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 109.2,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 11 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "tests/checkers/unittest_misc.py::TestFixme::test_non_alphanumeric_codetag"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 0,
+          "mode": "official",
+          "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 11,
+      "test_output_tail": "urces.html\n    import pkg_resources\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n==================================== PASSES ====================================\n=========================== short test summary info ============================\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_fixme_with_message\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_todo_without_message\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_xxx_without_space\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_xxx_middle\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_without_space_fixme\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_absent_codetag\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_other_present_codetag\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_issue_2321_should_not_trigger\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_issue_2321_should_trigger\nPASSED tests/checkers/unittest_misc.py::TestFixme::test_dont_trigger_on_todoist\nFAILED tests/checkers/unittest_misc.py::TestFixme::test_non_alphanumeric_codetag\n=================== 1 failed, 10 passed, 1 warning in 1.15s ====================\n\n"
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pylint-dev__pylint-5859"
+  },
+  {
+    "instance_id": "mwaskom__seaborn-2848",
+    "repo": "mwaskom/seaborn",
+    "agent": {
+      "run_id": "run_mwaskom__seaborn-2848_a0e029",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 38,
+      "tool_calls": 45,
+      "token_usage": {
+        "prompt": 596060,
+        "completion": 7354,
+        "total": 603414
+      },
+      "duration_ms": 75985,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 80.2,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 73 statuses parsed)",
+      "patch_applied": false,
+      "f2p_failures": [
+        "tests/test_relational.py::TestScatterPlotter::test_hue_order"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .[dev]",
+          "rc": 0,
+          "mode": "official",
+          "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 73,
+      "test_output_tail": "r::test_lineplot_vs_relplot[long_semantics3]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics4]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics5]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics6]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics7]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics8]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics9]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics10]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_vs_relplot[long_semantics11]\nFAILED tests/test_relational.py::TestLinePlotter::test_lineplot_smoke - panda...\nFAILED tests/test_relational.py::TestLinePlotter::test_ci_deprecation - panda...\nFAILED tests/test_relational.py::TestScatterPlotter::test_hue_order - TypeErr...\nFAILED tests/test_relational.py::TestScatterPlotter::test_unfilled_marker_edgecolor_warning\n================= 23 failed, 50 passed, 165 warnings in 18.87s =================\n\n"
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\mwaskom__seaborn-2848"
+  },
+  {
+    "instance_id": "pydata__xarray-3364",
+    "repo": "pydata/xarray",
+    "agent": {
+      "run_id": "run_pydata__xarray-3364_47e28f",
+      "runtime_status": "failed",
+      "termination_reason": "no_progress",
+      "verification_status": "not_run",
+      "modified_files": [
+        "xarray/core/concat.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 28,
+      "tool_calls": 30,
+      "token_usage": {
+        "prompt": 317718,
+        "completion": 8941,
+        "total": 326659
+      },
+      "duration_ms": 83651,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 93.1,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 2/2; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 113 statuses parsed)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "xarray/tests/test_combine.py::TestAutoCombineOldAPI::test_auto_combine_with_new_variables",
+        "xarray/tests/test_concat.py::TestConcatDataset::test_concat_merge_variables_present_in_some_datasets"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 0,
+          "mode": "official",
+          "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 113,
+      "test_output_tail": "PASSED xarray/tests/test_concat.py::TestConcatDataset::test_concat_fill_value[fill_value0]\nPASSED xarray/tests/test_concat.py::TestConcatDataset::test_concat_fill_value[2]\nPASSED xarray/tests/test_concat.py::TestConcatDataset::test_concat_fill_value[2.0]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_encoding\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_lazy\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_fill_value[fill_value0]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_fill_value[2]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_fill_value[2.0]\nPASSED xarray/tests/test_concat.py::TestConcatDataArray::test_concat_join_kwarg\nXFAIL xarray/tests/test_combine.py::TestNestedCombine::test_nested_concat_too_many_dims_at_once\nFAILED xarray/tests/test_combine.py::TestAutoCombineOldAPI::test_auto_combine_with_new_variables\nFAILED xarray/tests/test_concat.py::TestConcatDataset::test_concat_merge_variables_present_in_some_datasets\n=========== 2 failed, 110 passed, 1 xfailed, 108 warnings in 11.06s ============\n\n"
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
+  },
+  {
+    "instance_id": "pallets__flask-4992",
+    "repo": "pallets/flask",
+    "agent": {
+      "run_id": "run_pallets__flask-4992_296cbb",
+      "runtime_status": "failed",
+      "termination_reason": "no_progress",
+      "verification_status": "not_run",
+      "modified_files": [
+        "src/flask/config.py"
+      ],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 28,
+      "tool_calls": 29,
+      "token_usage": {
+        "prompt": 287858,
+        "completion": 12055,
+        "total": 299913
+      },
+      "duration_ms": 73124,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 91.4,
+    "judge": {
+      "outcome": "FAILED",
+      "reason": "fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests are silent passes, 19 statuses parsed)",
+      "patch_applied": true,
+      "f2p_failures": [
+        "tests/test_config.py::test_config_from_file_toml"
+      ],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 0,
+          "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+          "tail": "rmissions and conflicting behaviour with the system package manager, possibly rendering your system unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+        }
+      ],
+      "statuses_count": 19,
+      "test_output_tail": "=========\nPASSED tests/test_config.py::test_config_from_pyfile\nPASSED tests/test_config.py::test_config_from_object\nPASSED tests/test_config.py::test_config_from_file_json\nPASSED tests/test_config.py::test_from_prefixed_env\nPASSED tests/test_config.py::test_from_prefixed_env_custom_prefix\nPASSED tests/test_config.py::test_from_prefixed_env_nested\nPASSED tests/test_config.py::test_config_from_mapping\nPASSED tests/test_config.py::test_config_from_class\nPASSED tests/test_config.py::test_config_from_envvar\nPASSED tests/test_config.py::test_config_from_envvar_missing\nPASSED tests/test_config.py::test_config_missing\nPASSED tests/test_config.py::test_config_missing_file\nPASSED tests/test_config.py::test_custom_config_class\nPASSED tests/test_config.py::test_session_lifetime\nPASSED tests/test_config.py::test_get_namespace\nPASSED tests/test_config.py::test_from_pyfile_weird_encoding[utf-8]\nPASSED tests/test_config.py::test_from_pyfile_weird_encoding[iso-8859-15]\nPASSED tests/test_config.py::test_from_pyfile_weird_encoding[latin-1]\nFAILED tests/test_config.py::test_config_from_file_toml - TypeError: File mus...\n========================= 1 failed, 18 passed in 0.50s =========================\n\n"
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pallets__flask-4992"
+  }
+]

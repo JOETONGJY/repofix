@@ -1,0 +1,1810 @@
+{
+  "started_at": 1793993281.6869907,
+  "dataset_commit": "b0dde1093fe417d83b7184254edf8199c1f0dff5",
+  "rules_version": "selection_rules_v1",
+  "plan_rules_version": "Agent 可见测试计划推导（冻结规则visible_plan_rule_v1",
+  "funnel_test": {
+    "input": 300,
+    "kept": 95,
+    "rejected_by_rule": {
+      "R1_repo_parser": 191,
+      "R2_single_file": 0,
+      "R4_fail_to_pass": 2,
+      "R3_pass_to_pass": 7,
+      "R5_problem_length": 5
+    }
+  },
+  "funnel_dev": {
+    "input": 23,
+    "kept": 22,
+    "rejected_by_rule": {
+      "R1_repo_parser": 0,
+      "R2_single_file": 0,
+      "R4_fail_to_pass": 0,
+      "R3_pass_to_pass": 1,
+      "R5_problem_length": 0
+    }
+  },
+  "instances": [
+    {
+      "instance_id": "scikit-learn__scikit-learn-10297",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "29 top entries",
+          "seconds": 37.5
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L1 targets=['sklearn/linear_model/tests/test_ridge.py', 'sklearn/metrics/tests/test_regression.py', 'sklearn/utils/tests/test_random.py']",
+          "seconds": 0.1
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:scikit-learn__scikit-learn-10297",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"b90661d6a46a\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/sklearn\", \"package_probed\": \"sklear",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -v --no-use-pep517 --no-build-isolation -e .\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"s the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a vi",
+          "seconds": 331.5
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 3/3 targets: ['sklearn/linear_model/tests/test_ridge.py', 'sklearn/metrics/tests/test_regression.py', 'sklearn/utils/tests/test_random.py']",
+          "seconds": 12.6
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=1/1 p2p_regressed=0 fail_to_pass not all passing (1/1 failed); pass_to_pass regressions: 0",
+          "seconds": 371.4
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+          "seconds": 368.1
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.scikit-learn_1776_scikit-learn-10297@sha256:58b80e9100f9d107291b5ea37c76583ed4851d8e18ec07aef197f1803a290986",
+      "visible_plan": {
+        "identifiers_used": [
+          "sklearn/utils/random.py",
+          "sklearn/linear_model/ridge.py",
+          "sklearn/metrics/regression.py"
+        ],
+        "located_sources": [
+          "sklearn/utils/random.py",
+          "sklearn/linear_model/ridge.py",
+          "sklearn/metrics/regression.py",
+          "sklearn/neighbors/regression.py",
+          "sklearn/utils/validation.py"
+        ],
+        "targets": [
+          "sklearn/linear_model/tests/test_ridge.py",
+          "sklearn/metrics/tests/test_regression.py",
+          "sklearn/utils/tests/test_random.py"
+        ],
+        "layer": "L1",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "sklearn/linear_model/tests/test_ridge.py",
+          "sklearn/metrics/tests/test_regression.py",
+          "sklearn/utils/tests/test_random.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "sklearn/linear_model/tests/test_ridge.py",
+          "sklearn/metrics/tests/test_regression.py",
+          "sklearn/utils/tests/test_random.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:scikit-learn__scikit-learn-10297",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "b90661d6a46a",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/sklearn",
+        "package_probed": "sklearn"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -v --no-use-pep517 --no-build-isolation -e .",
+            "rc": 0,
+            "mode": "official",
+            "tail": "s the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "sklearn/linear_model/tests/test_ridge.py",
+          "rc": 0,
+          "seconds": 7.9
+        },
+        {
+          "target": "sklearn/metrics/tests/test_regression.py",
+          "rc": 0,
+          "seconds": 2.5
+        },
+        {
+          "target": "sklearn/utils/tests/test_random.py",
+          "rc": 0,
+          "seconds": 2.2
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+        "f2p_results": {
+          "sklearn/linear_model/tests/test_ridge.py::test_ridge_classifier_cv_store_cv_values": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-18869",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "38 top entries",
+          "seconds": 89.2
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L1 targets=['lib/matplotlib/tests/test_image.py']",
+          "seconds": 0.0
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:matplotlib__matplotlib-18869",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"b7d05919865f\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/lib/matplotlib\", \"package_probed\": ",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to su",
+          "seconds": 619.1
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 1/1 targets: ['lib/matplotlib/tests/test_image.py']",
+          "seconds": 80.2
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=4/4 p2p_regressed=0 fail_to_pass not all passing (4/4 failed); pass_to_pass regressions: 0",
+          "seconds": 696.9
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+          "seconds": 700.2
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.matplotlib_1776_matplotlib-18869@sha256:b336640dcab0603d825bae6c20f7acbd6cd37f4aa5c88cc47d126b8756303754",
+      "visible_plan": {
+        "identifiers_used": [
+          "lib/matplotlib/image.py"
+        ],
+        "located_sources": [
+          "lib/matplotlib/image.py"
+        ],
+        "targets": [
+          "lib/matplotlib/tests/test_image.py"
+        ],
+        "layer": "L1",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "lib/matplotlib/tests/test_image.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "lib/matplotlib/tests/test_image.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:matplotlib__matplotlib-18869",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "b7d05919865f",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/lib/matplotlib",
+        "package_probed": "matplotlib"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .",
+            "rc": 0,
+            "mode": "official",
+            "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "lib/matplotlib/tests/test_image.py",
+          "rc": 1,
+          "seconds": 80.2
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+        "f2p_results": {
+          "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0-version_tuple0]": "PASSED",
+          "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0rc2-version_tuple1]": "PASSED",
+          "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0.dev820+g6768ef8c4c-version_tuple2]": "PASSED",
+          "lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0.post820+g6768ef8c4c-version_tuple3]": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-11143",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "30 top entries",
+          "seconds": 22.6
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L2 targets=['testing/example_scripts/marks/marks_considered_keywords/test_marks_as_keywords.py', 'testing/test_mark.py', 'testing/test_mark_expression.py']",
+          "seconds": 0.1
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:pytest-dev__pytest-11143",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"6995257cf470\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/src/_pytest\", \"package_probed\": \"_p",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .\", \"rc\": 1, \"mode\": \"official\", \"fallback_rc\": 0, \"fallback_command\": \"python -m pip install -e . --no-build-isolation --no-deps\", \"tail\": \"rmissions and conflicting behaviour with the system package manager, possibly re",
+          "seconds": 12.8
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 3/3 targets: ['testing/example_scripts/marks/marks_considered_keywords/test_marks_as_keywords.py', 'testing/test_mark.py', 'testing/test_mark_expression.py']",
+          "seconds": 15.1
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=1/1 p2p_regressed=0 fail_to_pass not all passing (1/1 failed); pass_to_pass regressions: 0",
+          "seconds": 59.4
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+          "seconds": 56.7
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.pytest-dev_1776_pytest-11143@sha256:e08ce142adec5ec985e867e910045734ec3c58fe174fc054c5f83855bed78fd4",
+      "visible_plan": {
+        "identifiers_used": [
+          "src/_pytest/mark/expression.py"
+        ],
+        "located_sources": [
+          "src/_pytest/mark/expression.py",
+          "src/_pytest/runner.py",
+          "src/_pytest/_py/path.py",
+          "src/_pytest/pathlib.py",
+          "src/_pytest/_code/source.py"
+        ],
+        "targets": [
+          "testing/example_scripts/marks/marks_considered_keywords/test_marks_as_keywords.py",
+          "testing/test_mark.py",
+          "testing/test_mark_expression.py"
+        ],
+        "layer": "L2",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "testing/example_scripts/marks/marks_considered_keywords/test_marks_as_keywords.py",
+          "testing/test_mark.py",
+          "testing/test_mark_expression.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "testing/example_scripts/marks/marks_considered_keywords/test_marks_as_keywords.py",
+          "testing/test_mark.py",
+          "testing/test_mark_expression.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:pytest-dev__pytest-11143",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "6995257cf470",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/src/_pytest",
+        "package_probed": "_pytest"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .",
+            "rc": 1,
+            "mode": "official",
+            "fallback_rc": 0,
+            "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+            "tail": "rmissions and conflicting behaviour with the system package manager, possibly rendering your system unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "testing/example_scripts/marks/marks_considered_keywords/test_marks_as_keywords.py",
+          "rc": 0,
+          "seconds": 5.2
+        },
+        {
+          "target": "testing/test_mark.py",
+          "rc": 0,
+          "seconds": 7.1
+        },
+        {
+          "target": "testing/test_mark_expression.py",
+          "rc": 0,
+          "seconds": 2.8
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+        "f2p_results": {
+          "testing/test_assertrewrite.py::TestIssue11140::test_constant_not_picked_as_module_docstring": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "astropy__astropy-12907",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "33 top entries",
+          "seconds": 55.0
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L1 targets=['astropy/cosmology/io/tests/test_model.py', 'astropy/modeling/tests/test_models.py', 'astropy/modeling/tests/test_separable.py']",
+          "seconds": 0.1
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:astropy__astropy-12907",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"d16bfe05a744\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/astropy\", \"package_probed\": \"astrop",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": false,
+          "detail": "[{\"command\": \"python -m pip install -e .[test] --verbose\", \"rc\": 1, \"mode\": \"official\", \"fallback_rc\": 1, \"fallback_command\": \"python -m pip install -e .[test] --verbose --no-build-isolation --no-deps\", \"tail\": \"ess/_in_process.py prepare_metadata_for_build_ed",
+          "seconds": 9.0
+        }
+      ],
+      "ok": false,
+      "image_digest": "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907@sha256:e082963099ed7d5a5f75a0be46e338be36faae33b2cba5289a9ddbd505997f1f",
+      "visible_plan": {
+        "identifiers_used": [
+          "astropy/cosmology/io/model.py",
+          "astropy/modeling/models.py",
+          "astropy/modeling/separable.py"
+        ],
+        "located_sources": [
+          "astropy/cosmology/io/model.py",
+          "astropy/modeling/models.py",
+          "astropy/modeling/separable.py",
+          "astropy/io/misc/asdf/tags/transform/compound.py"
+        ],
+        "targets": [
+          "astropy/cosmology/io/tests/test_model.py",
+          "astropy/modeling/tests/test_models.py",
+          "astropy/modeling/tests/test_separable.py"
+        ],
+        "layer": "L1",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "astropy/cosmology/io/tests/test_model.py",
+          "astropy/modeling/tests/test_models.py",
+          "astropy/modeling/tests/test_separable.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped"
+      },
+      "agent_image": "repofix-swebenv:astropy__astropy-12907",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "d16bfe05a744",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/astropy",
+        "package_probed": "astropy"
+      },
+      "official_install": {
+        "ok": false,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .[test] --verbose",
+            "rc": 1,
+            "mode": "official",
+            "fallback_rc": 1,
+            "fallback_command": "python -m pip install -e .[test] --verbose --no-build-isolation --no-deps",
+            "tail": "ess/_in_process.py prepare_metadata_for_build_editable /tmp/tmp20145l0p\n  cwd: /testbed\nerror: metadata-generation-failed\n\n× Encountered error while generating package metadata.\n╰─> See above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n"
+          }
+        ]
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "psf__requests-1963",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "18 top entries",
+          "seconds": 6.7
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L2 targets=['test_requests.py']",
+          "seconds": 0.1
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:psf__requests-1963",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"110048f9837f\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/requests\", \"package_probed\": \"reque",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install .\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppr",
+          "seconds": 24.0
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 1/1 targets: ['test_requests.py']",
+          "seconds": 9.7
+        },
+        {
+          "step": "judge_smoke",
+          "ok": false,
+          "detail": "outcome=FAILED f2p_failed=7/7 p2p_regressed=42 fail_to_pass not all passing (7/7 failed); pass_to_pass regressions: 42",
+          "seconds": 53.5
+        }
+      ],
+      "ok": false,
+      "image_digest": "swebench/sweb.eval.x86_64.psf_1776_requests-1963@sha256:5ca751c160affa98d160831608fffe3e2c4fb61c4fb2dad2b147ef2a885088e4",
+      "visible_plan": {
+        "identifiers_used": [
+          "requests/packages/urllib3/request.py"
+        ],
+        "located_sources": [
+          "requests/packages/urllib3/request.py"
+        ],
+        "targets": [
+          "test_requests.py"
+        ],
+        "layer": "L2",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "test_requests.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "test_requests.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:psf__requests-1963",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "110048f9837f",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/requests",
+        "package_probed": "requests"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install .",
+            "rc": 0,
+            "mode": "official",
+            "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "test_requests.py",
+          "rc": 1,
+          "seconds": 9.7
+        }
+      ],
+      "smoke_tail": "icode_method_name - request...\nFAILED test_requests.py::RequestsTestCase::test_unicode_multipart_post - requ...\nFAILED test_requests.py::RequestsTestCase::test_uppercase_scheme_redirect - r...\nFAILED test_requests.py::RequestsTestCase::test_urlencoded_get_query_multivalued_param\nFAILED test_requests.py::RequestsTestCase::test_user_agent_transfers - reques...\nFAILED test_requests.py::TestTimeout::test_stream_timeout - requests.exceptio...\nFAILED test_requests.py::TestRedirects::test_requests_are_updated_each_time\n================== 51 failed, 70 passed, 3 warnings in 23.52s ==================\n\n",
+      "role": "formal"
+    },
+    {
+      "instance_id": "pylint-dev__pylint-5859",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "31 top entries",
+          "seconds": 47.1
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L2 targets=['tests/config/test_config.py', 'tests/config/test_functional_config_loading.py', 'tests/config/unittest_config.py']",
+          "seconds": 0.1
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:pylint-dev__pylint-5859",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"182cc539b815\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/pylint\", \"package_probed\": \"pylint\"",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to su",
+          "seconds": 7.7
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 3/3 targets: ['tests/config/test_config.py', 'tests/config/test_functional_config_loading.py', 'tests/config/unittest_config.py']",
+          "seconds": 115.1
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=1/1 p2p_regressed=0 fail_to_pass not all passing (1/1 failed); pass_to_pass regressions: 0",
+          "seconds": 66.8
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+          "seconds": 69.5
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.pylint-dev_1776_pylint-5859@sha256:12412d9d1d7a06b8fa30dd0ff14ae67177fffee77d1e6ac277606fb7334837cf",
+      "visible_plan": {
+        "identifiers_used": [
+          "pylint/config/option.py"
+        ],
+        "located_sources": [
+          "pylint/config/option.py"
+        ],
+        "targets": [
+          "tests/config/test_config.py",
+          "tests/config/test_functional_config_loading.py",
+          "tests/config/unittest_config.py"
+        ],
+        "layer": "L2",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/config/test_config.py",
+          "tests/config/test_functional_config_loading.py",
+          "tests/config/unittest_config.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "tests/config/test_config.py",
+          "tests/config/test_functional_config_loading.py",
+          "tests/config/unittest_config.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:pylint-dev__pylint-5859",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "182cc539b815",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/pylint",
+        "package_probed": "pylint"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .",
+            "rc": 0,
+            "mode": "official",
+            "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "tests/config/test_config.py",
+          "rc": 0,
+          "seconds": 28.9
+        },
+        {
+          "target": "tests/config/test_functional_config_loading.py",
+          "rc": 0,
+          "seconds": 65.0
+        },
+        {
+          "target": "tests/config/unittest_config.py",
+          "rc": 0,
+          "seconds": 21.2
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+        "f2p_results": {
+          "tests/checkers/unittest_misc.py::TestFixme::test_non_alphanumeric_codetag": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "mwaskom__seaborn-2848",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "19 top entries",
+          "seconds": 10.7
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L2 targets=['tests/_core/test_plot.py', 'tests/_core/test_subplots.py', 'tests/test_miscplot.py']",
+          "seconds": 0.0
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:mwaskom__seaborn-2848",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"94621cef29f8\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/seaborn\", \"package_probed\": \"seabor",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .[dev]\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want ",
+          "seconds": 4.3
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 3/3 targets: ['tests/_core/test_plot.py', 'tests/_core/test_subplots.py', 'tests/test_miscplot.py']",
+          "seconds": 20.1
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=1/1 p2p_regressed=0 fail_to_pass not all passing (1/1 failed); pass_to_pass regressions: 0",
+          "seconds": 35.2
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+          "seconds": 34.8
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.mwaskom_1776_seaborn-2848@sha256:d719470351e66623e532a4f23cdedfe8fb737147fe108e4b5829aa273528389d",
+      "visible_plan": {
+        "identifiers_used": [
+          "seaborn/_core/plot.py"
+        ],
+        "located_sources": [
+          "seaborn/_core/plot.py",
+          "seaborn/external/version.py"
+        ],
+        "targets": [
+          "tests/_core/test_plot.py",
+          "tests/_core/test_subplots.py",
+          "tests/test_miscplot.py"
+        ],
+        "layer": "L2",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/_core/test_plot.py",
+          "tests/_core/test_subplots.py",
+          "tests/test_miscplot.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "tests/_core/test_plot.py",
+          "tests/_core/test_subplots.py",
+          "tests/test_miscplot.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:mwaskom__seaborn-2848",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "94621cef29f8",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/seaborn",
+        "package_probed": "seaborn"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .[dev]",
+            "rc": 0,
+            "mode": "official",
+            "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "tests/_core/test_plot.py",
+          "rc": 1,
+          "seconds": 13.8
+        },
+        {
+          "target": "tests/_core/test_subplots.py",
+          "rc": 0,
+          "seconds": 3.6
+        },
+        {
+          "target": "tests/test_miscplot.py",
+          "rc": 0,
+          "seconds": 2.7
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+        "f2p_results": {
+          "tests/test_relational.py::TestScatterPlotter::test_hue_order": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "pydata__xarray-3364",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "29 top entries",
+          "seconds": 10.6
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L2 targets=['xarray/tests/test_coding.py', 'xarray/tests/test_coding_strings.py', 'xarray/tests/test_coding_times.py']",
+          "seconds": 0.0
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:pydata__xarray-3364",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"863e49066ca4\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/xarray\", \"package_probed\": \"xarray\"",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to su",
+          "seconds": 11.6
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 3/3 targets: ['xarray/tests/test_coding.py', 'xarray/tests/test_coding_strings.py', 'xarray/tests/test_coding_times.py']",
+          "seconds": 23.5
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=2/2 p2p_regressed=0 fail_to_pass not all passing (2/2 failed); pass_to_pass regressions: 0",
+          "seconds": 30.2
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+          "seconds": 30.3
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.pydata_1776_xarray-3364@sha256:8591047f512d8d26b4d0e121d2d04eb6b95fa6ad41e13d92fe64f5ef66244c27",
+      "visible_plan": {
+        "identifiers_used": [
+          "xarray/core/concat.py",
+          "xarray/core/missing.py",
+          "xarray/coding/variables.py"
+        ],
+        "located_sources": [
+          "xarray/core/concat.py",
+          "xarray/core/missing.py",
+          "xarray/coding/variables.py",
+          "xarray/core/options.py"
+        ],
+        "targets": [
+          "xarray/tests/test_coding.py",
+          "xarray/tests/test_coding_strings.py",
+          "xarray/tests/test_coding_times.py"
+        ],
+        "layer": "L2",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "xarray/tests/test_coding.py",
+          "xarray/tests/test_coding_strings.py",
+          "xarray/tests/test_coding_times.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "xarray/tests/test_coding.py",
+          "xarray/tests/test_coding_strings.py",
+          "xarray/tests/test_coding_times.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:pydata__xarray-3364",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "863e49066ca4",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/xarray",
+        "package_probed": "xarray"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .",
+            "rc": 0,
+            "mode": "official",
+            "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "xarray/tests/test_coding.py",
+          "rc": 0,
+          "seconds": 7.0
+        },
+        {
+          "target": "xarray/tests/test_coding_strings.py",
+          "rc": 0,
+          "seconds": 6.2
+        },
+        {
+          "target": "xarray/tests/test_coding_times.py",
+          "rc": 1,
+          "seconds": 10.3
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+        "f2p_results": {
+          "xarray/tests/test_combine.py::TestAutoCombineOldAPI::test_auto_combine_with_new_variables": "PASSED",
+          "xarray/tests/test_concat.py::TestConcatDataset::test_concat_merge_variables_present_in_some_datasets": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "pallets__flask-4992",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "21 top entries",
+          "seconds": 10.6
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L2 targets=['tests/test_appctx.py', 'tests/test_cli.py']",
+          "seconds": 0.2
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:pallets__flask-4992",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"4c288bc97ea3\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/src/flask\", \"package_probed\": \"flas",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .\", \"rc\": 1, \"mode\": \"official\", \"fallback_rc\": 0, \"fallback_command\": \"python -m pip install -e . --no-build-isolation --no-deps\", \"tail\": \"rmissions and conflicting behaviour with the system package manager, possibly re",
+          "seconds": 22.2
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 2/2 targets: ['tests/test_appctx.py', 'tests/test_cli.py']",
+          "seconds": 5.7
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=1/1 p2p_regressed=0 fail_to_pass not all passing (1/1 failed); pass_to_pass regressions: 0",
+          "seconds": 30.9
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+          "seconds": 30.7
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.pallets_1776_flask-4992@sha256:bb1460876a7bc667f71b46aac744dd6f6d7f5f66e79902461cf76c6f8c4f7150",
+      "visible_plan": {
+        "identifiers_used": [
+          "src\\flask\\app.py",
+          "src\\flask\\cli.py"
+        ],
+        "located_sources": [
+          "src\\flask\\app.py",
+          "src\\flask\\cli.py"
+        ],
+        "targets": [
+          "tests/test_appctx.py",
+          "tests/test_cli.py"
+        ],
+        "layer": "L2",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/test_appctx.py",
+          "tests/test_cli.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "tests/test_appctx.py",
+          "tests/test_cli.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:pallets__flask-4992",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "4c288bc97ea3",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/src/flask",
+        "package_probed": "flask"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .",
+            "rc": 1,
+            "mode": "official",
+            "fallback_rc": 0,
+            "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+            "tail": "rmissions and conflicting behaviour with the system package manager, possibly rendering your system unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "tests/test_appctx.py",
+          "rc": 1,
+          "seconds": 1.6
+        },
+        {
+          "target": "tests/test_cli.py",
+          "rc": 0,
+          "seconds": 4.1
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch",
+        "f2p_results": {
+          "tests/test_config.py::test_config_from_file_toml": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "pvlib__pvlib-python-1072",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "26 top entries",
+          "seconds": 8.1
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L1 targets=['pvlib/tests/test_temperature.py']",
+          "seconds": 0.0
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:pvlib__pvlib-python-1072",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"04a523fafbd6\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": false, \"import_path\": \"Traceback (most recent call last):\\n  File ",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .[all]\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"nusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want ",
+          "seconds": 14.1
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "no target within budget -> empty plan (INCONCLUSIVE finish)",
+          "seconds": 4.6
+        },
+        {
+          "step": "judge_smoke",
+          "ok": false,
+          "detail": "outcome=INCONCLUSIVE f2p_failed=1/1 p2p_regressed=18 no test statuses parsed from output; parser or env mismatch",
+          "seconds": 24.8
+        }
+      ],
+      "ok": false,
+      "image_digest": "swebench/sweb.eval.x86_64.pvlib_1776_pvlib-python-1072@sha256:c8e43bebd10d7d2330820af520361dc6adc9642f98c7b7b7c415cca39852ffdd",
+      "visible_plan": {
+        "identifiers_used": [
+          "benchmarks/benchmarks/temperature.py",
+          "pvlib/temperature.py"
+        ],
+        "located_sources": [
+          "benchmarks/benchmarks/temperature.py",
+          "pvlib/temperature.py"
+        ],
+        "targets": [
+          "pvlib/tests/test_temperature.py"
+        ],
+        "layer": "L1",
+        "argv": [],
+        "plan_source": "empty_over_budget"
+      },
+      "agent_image": "repofix-swebenv:pvlib__pvlib-python-1072",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "04a523fafbd6",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": false,
+        "import_path": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/testbed/pvlib/__init__.py\", line 10, in <module>\n    from pvlib import ivtools  # noqa: F401\n  File \"/testbed/pvlib/i",
+        "package_probed": "pvlib"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .[all]",
+            "rc": 0,
+            "mode": "official",
+            "tail": "nusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "pvlib/tests/test_temperature.py",
+          "rc": 4,
+          "seconds": 4.6
+        }
+      ],
+      "smoke_tail": "01\npvlib/ivtools/__init__.py:7: in <module>\n    from pvlib.ivtools import sde, sdm, utils  # noqa: F401\npvlib/ivtools/sdm.py:15: in <module>\n    from pvlib.pvsystem import singlediode, v_from_i\npvlib/pvsystem.py:16: in <module>\n    from pvlib import (atmosphere, iam, inverter, irradiance,\npvlib/singlediode.py:59: in <module>\n    NsVbi=np.Inf, breakdown_factor=0., breakdown_voltage=-5.5,\n/opt/miniconda3/envs/testbed/lib/python3.9/site-packages/numpy/__init__.py:397: in __getattr__\n    raise AttributeError(\nE   AttributeError: `np.Inf` was removed in the NumPy 2.0 release. Use `np.inf` instead.\n",
+      "role": "rehearsal"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-10325",
+      "steps": [
+        {
+          "step": "image_present",
+          "ok": true,
+          "detail": "cached locally",
+          "seconds": 0.1
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "29 top entries",
+          "seconds": 34.1
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L2 targets=['tests/test_docutilsconf.py', 'tests/test_metadata.py', 'tests/test_util.py']",
+          "seconds": 0.2
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:sphinx-doc__sphinx-10325",
+          "seconds": 0.1
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"7bdc11e87c7d\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/sphinx\", \"package_probed\": \"sphinx\"",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .[test]\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want",
+          "seconds": 130.2
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 3/3 targets: ['tests/test_docutilsconf.py', 'tests/test_metadata.py', 'tests/test_util.py']",
+          "seconds": 25.8
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=1/1 p2p_regressed=0 fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests ar",
+          "seconds": 185.8
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+          "seconds": 183.4
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.sphinx-doc_1776_sphinx-10325@sha256:32e0fe0fa8f3c0b48fc50cee82b94da766d5f876b94a4468143c06628fdd77c7",
+      "visible_plan": {
+        "identifiers_used": [
+          "sphinx\\environment\\collectors\\metadata.py",
+          "sphinx\\util\\inspect.py"
+        ],
+        "located_sources": [
+          "sphinx\\environment\\collectors\\metadata.py",
+          "sphinx\\util\\inspect.py"
+        ],
+        "targets": [
+          "tests/test_docutilsconf.py",
+          "tests/test_metadata.py",
+          "tests/test_util.py"
+        ],
+        "layer": "L2",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/test_docutilsconf.py",
+          "tests/test_metadata.py",
+          "tests/test_util.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "tests/test_docutilsconf.py",
+          "tests/test_metadata.py",
+          "tests/test_util.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:sphinx-doc__sphinx-10325",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "7bdc11e87c7d",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/sphinx",
+        "package_probed": "sphinx"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .[test]",
+            "rc": 0,
+            "mode": "official",
+            "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "tests/test_docutilsconf.py",
+          "rc": 0,
+          "seconds": 12.5
+        },
+        {
+          "target": "tests/test_metadata.py",
+          "rc": 0,
+          "seconds": 5.6
+        },
+        {
+          "target": "tests/test_util.py",
+          "rc": 0,
+          "seconds": 7.7
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+        "f2p_results": {
+          "tests/test_ext_autodoc_automodule.py::test_automodule_inherited_members": "SILENT_PASS"
+        },
+        "p2p_regressions": []
+      },
+      "role": "formal"
+    },
+    {
+      "instance_id": "pylint-dev__astroid-1196",
+      "steps": [
+        {
+          "step": "image_pull",
+          "ok": true,
+          "detail": "",
+          "seconds": 34.8
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "27 top entries",
+          "seconds": 6.4
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=issue_scoped layer=L3 targets=['tests/unittest_inference.py', 'tests/unittest_nodes.py', 'tests/unittest_regrtest.py']",
+          "seconds": 0.1
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:pylint-dev__astroid-1196",
+          "seconds": 7.4
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.4
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"39c2a9805970\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/astroid\", \"package_probed\": \"astroi",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"nusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to su",
+          "seconds": 4.5
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "kept 3/3 targets: ['tests/unittest_inference.py', 'tests/unittest_nodes.py', 'tests/unittest_regrtest.py']",
+          "seconds": 24.5
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=2/2 p2p_regressed=0 fail_to_pass failures: 2/2; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests ar",
+          "seconds": 16.8
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+          "seconds": 15.4
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.pylint-dev_1776_astroid-1196@sha256:ddf6350d124714cb8cc0f100e536479fa6376130ea4ec3afbd112debac4ac9b9",
+      "visible_plan": {
+        "identifiers_used": [
+          "astroid/context.py"
+        ],
+        "located_sources": [
+          "astroid/context.py",
+          "astroid/node_classes.py",
+          "astroid/nodes/node_classes.py"
+        ],
+        "targets": [
+          "tests/unittest_inference.py",
+          "tests/unittest_nodes.py",
+          "tests/unittest_regrtest.py"
+        ],
+        "layer": "L3",
+        "argv": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/unittest_inference.py",
+          "tests/unittest_nodes.py",
+          "tests/unittest_regrtest.py",
+          "-q",
+          "--tb=no",
+          "-rf"
+        ],
+        "plan_source": "issue_scoped",
+        "kept_targets": [
+          "tests/unittest_inference.py",
+          "tests/unittest_nodes.py",
+          "tests/unittest_regrtest.py"
+        ]
+      },
+      "agent_image": "repofix-swebenv:pylint-dev__astroid-1196",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "39c2a9805970",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/astroid",
+        "package_probed": "astroid"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .",
+            "rc": 0,
+            "mode": "official",
+            "tail": "nusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "target_timing": [
+        {
+          "target": "tests/unittest_inference.py",
+          "rc": 0,
+          "seconds": 9.3
+        },
+        {
+          "target": "tests/unittest_nodes.py",
+          "rc": 0,
+          "seconds": 8.6
+        },
+        {
+          "target": "tests/unittest_regrtest.py",
+          "rc": 0,
+          "seconds": 6.6
+        }
+      ],
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+        "f2p_results": {
+          "tests/unittest_python3.py::Python3TC::test_unpacking_in_dict_getitem_uninferable": "PASSED",
+          "tests/unittest_python3.py::Python3TC::test_unpacking_in_dict_getitem_with_ref": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "rehearsal"
+    },
+    {
+      "instance_id": "sqlfluff__sqlfluff-1517",
+      "steps": [
+        {
+          "step": "image_pull",
+          "ok": true,
+          "detail": "",
+          "seconds": 91.9
+        },
+        {
+          "step": "testbed_extract",
+          "ok": true,
+          "detail": "28 top entries",
+          "seconds": 26.2
+        },
+        {
+          "step": "visible_plan_derive",
+          "ok": true,
+          "detail": "source=empty layer=none targets=[]",
+          "seconds": 0.0
+        },
+        {
+          "step": "agent_image_build",
+          "ok": true,
+          "detail": "repofix-swebenv:sqlfluff__sqlfluff-1517",
+          "seconds": 22.3
+        },
+        {
+          "step": "container_start",
+          "ok": true,
+          "detail": "",
+          "seconds": 0.5
+        },
+        {
+          "step": "workspace_validation",
+          "ok": true,
+          "detail": "{\"head_matches_base\": true, \"head\": \"304a197829f9\", \"worktree_clean\": true, \"untracked_entries\": 0, \"python_executable\": \"/opt/miniconda3/envs/testbed/bin/python\", \"rg_available\": true, \"import_points_to_testbed\": true, \"import_path\": \"/testbed/src/sqlfluff\", \"package_probed\": \"s",
+          "seconds": 0.0
+        },
+        {
+          "step": "official_install",
+          "ok": true,
+          "detail": "[{\"command\": \"python -m pip install -e .\", \"rc\": 0, \"mode\": \"official\", \"tail\": \"unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to su",
+          "seconds": 8.4
+        },
+        {
+          "step": "visible_baseline",
+          "ok": true,
+          "detail": "empty plan (skipped)",
+          "seconds": 0.0
+        },
+        {
+          "step": "judge_smoke",
+          "ok": true,
+          "detail": "outcome=FAILED f2p_failed=1/1 p2p_regressed=0 fail_to_pass failures: 1/1; pass_to_fail regressions: 0 (official semantics: explicit FAILED/ERROR only; absent tests ar",
+          "seconds": 42.2
+        },
+        {
+          "step": "gold_calibration",
+          "ok": true,
+          "detail": "outcome=RESOLVED all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+          "seconds": 38.6
+        }
+      ],
+      "ok": true,
+      "image_digest": "swebench/sweb.eval.x86_64.sqlfluff_1776_sqlfluff-1517@sha256:6e93dc479c481210c7a9b8ee6662288bd6b8220203a43074e46b0764729a653b",
+      "visible_plan": {
+        "identifiers_used": [],
+        "located_sources": [
+          "src/sqlfluff/core/parser/grammar/sequence.py",
+          "src/sqlfluff/core/rules/analysis/select.py",
+          "src/sqlfluff/cli/commands.py",
+          "src/sqlfluff/core/linter/linter.py",
+          "src/sqlfluff/core/config.py",
+          "src/sqlfluff/core/parser/parser.py",
+          "src/sqlfluff/cli/helpers.py",
+          "src/sqlfluff/core/parser/helpers.py"
+        ],
+        "targets": [],
+        "layer": "none",
+        "argv": [],
+        "plan_source": "empty"
+      },
+      "agent_image": "repofix-swebenv:sqlfluff__sqlfluff-1517",
+      "workspace_checks": {
+        "head_matches_base": true,
+        "head": "304a197829f9",
+        "worktree_clean": true,
+        "untracked_entries": 0,
+        "python_executable": "/opt/miniconda3/envs/testbed/bin/python",
+        "rg_available": true,
+        "import_points_to_testbed": true,
+        "import_path": "/testbed/src/sqlfluff",
+        "package_probed": "sqlfluff"
+      },
+      "official_install": {
+        "ok": true,
+        "attempts": [
+          {
+            "command": "python -m pip install -e .",
+            "rc": 0,
+            "mode": "official",
+            "tail": "unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.\n"
+          }
+        ]
+      },
+      "gold_calibration": {
+        "outcome": "RESOLVED",
+        "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+        "f2p_results": {
+          "test/dialects/ansi_test.py::test__dialect__ansi_multiple_semicolons[select": "PASSED"
+        },
+        "p2p_regressions": []
+      },
+      "role": "rehearsal"
+    }
+  ],
+  "finished_at": 1793993640.3955204
+}

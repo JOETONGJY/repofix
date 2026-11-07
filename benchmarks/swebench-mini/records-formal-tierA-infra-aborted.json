@@ -1,0 +1,194 @@
+[
+  {
+    "instance_id": "scikit-learn__scikit-learn-10297",
+    "repo": "scikit-learn/scikit-learn",
+    "resolved": false,
+    "agent_seconds": 290.0,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "StoreWriteError: UNIQUE constraint failed: runs.run_id",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\scikit-learn__scikit-learn-10297"
+  },
+  {
+    "instance_id": "matplotlib__matplotlib-18869",
+    "repo": "matplotlib/matplotlib",
+    "agent": {
+      "run_id": "run_matplotlib__matplotlib-18869",
+      "runtime_status": "budget_exceeded",
+      "termination_reason": "budget_exhausted:max_total_tokens",
+      "verification_status": "not_run",
+      "modified_files": [],
+      "patch_path": null,
+      "trace_path": null,
+      "test_report_path": null,
+      "model_calls": 18,
+      "tool_calls": 22,
+      "token_usage": {
+        "prompt": 195206,
+        "completion": 19050,
+        "total": 214256
+      },
+      "duration_ms": 125307,
+      "review_status": null,
+      "reviewed_patch_hash": null
+    },
+    "agent_seconds": 538.9,
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "official install commands failed: ['python -m pip install -e .']",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": [],
+      "install_attempts": [
+        {
+          "command": "python -m pip install -e .",
+          "rc": 1,
+          "mode": "official",
+          "fallback_rc": 1,
+          "fallback_command": "python -m pip install -e . --no-build-isolation --no-deps",
+          "tail": "\n  note: This error originates from a subprocess, and is likely not a problem with pip.\nerror: metadata-generation-failed\n\n× Encountered error while generating package metadata.\n╰─> See above for output.\n\nnote: This is an issue with the package mentioned above, not pip.\nhint: See above for details.\n"
+        }
+      ],
+      "statuses_count": 0
+    },
+    "resolved": false,
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\matplotlib__matplotlib-18869"
+  },
+  {
+    "instance_id": "sphinx-doc__sphinx-10325",
+    "repo": "sphinx-doc/sphinx",
+    "resolved": false,
+    "agent_seconds": 160.3,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "StoreWriteError: UNIQUE constraint failed: runs.run_id",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\sphinx-doc__sphinx-10325"
+  },
+  {
+    "instance_id": "pytest-dev__pytest-11143",
+    "repo": "pytest-dev/pytest",
+    "resolved": false,
+    "agent_seconds": 31.4,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "StoreWriteError: UNIQUE constraint failed: runs.run_id",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pytest-dev__pytest-11143"
+  },
+  {
+    "instance_id": "pylint-dev__pylint-5859",
+    "repo": "pylint-dev/pylint",
+    "resolved": false,
+    "agent_seconds": 49.8,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "StoreWriteError: UNIQUE constraint failed: runs.run_id",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pylint-dev__pylint-5859"
+  },
+  {
+    "instance_id": "mwaskom__seaborn-2848",
+    "repo": "mwaskom/seaborn",
+    "resolved": false,
+    "agent_seconds": 15.7,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "StoreWriteError: UNIQUE constraint failed: runs.run_id",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\mwaskom__seaborn-2848"
+  },
+  {
+    "instance_id": "pydata__xarray-3364",
+    "repo": "pydata/xarray",
+    "resolved": false,
+    "agent_seconds": 22.7,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "StoreWriteError: UNIQUE constraint failed: runs.run_id",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
+  },
+  {
+    "instance_id": "pallets__flask-4992",
+    "repo": "pallets/flask",
+    "resolved": false,
+    "agent_seconds": 31.3,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "StoreWriteError: UNIQUE constraint failed: runs.run_id",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pallets__flask-4992"
+  }
+]

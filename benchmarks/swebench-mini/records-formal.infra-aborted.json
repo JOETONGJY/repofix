@@ -1,0 +1,170 @@
+[
+  {
+    "instance_id": "scikit-learn__scikit-learn-10297",
+    "repo": "scikit-learn/scikit-learn",
+    "resolved": false,
+    "agent_seconds": 0.7,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\scikit-learn__scikit-learn-10297"
+  },
+  {
+    "instance_id": "matplotlib__matplotlib-18869",
+    "repo": "matplotlib/matplotlib",
+    "resolved": false,
+    "agent_seconds": 0.2,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\matplotlib__matplotlib-18869"
+  },
+  {
+    "instance_id": "sphinx-doc__sphinx-10325",
+    "repo": "sphinx-doc/sphinx",
+    "resolved": false,
+    "agent_seconds": 0.2,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\sphinx-doc__sphinx-10325"
+  },
+  {
+    "instance_id": "pytest-dev__pytest-11143",
+    "repo": "pytest-dev/pytest",
+    "resolved": false,
+    "agent_seconds": 0.2,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pytest-dev__pytest-11143"
+  },
+  {
+    "instance_id": "pylint-dev__pylint-5859",
+    "repo": "pylint-dev/pylint",
+    "resolved": false,
+    "agent_seconds": 0.2,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pylint-dev__pylint-5859"
+  },
+  {
+    "instance_id": "mwaskom__seaborn-2848",
+    "repo": "mwaskom/seaborn",
+    "resolved": false,
+    "agent_seconds": 0.2,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\mwaskom__seaborn-2848"
+  },
+  {
+    "instance_id": "pydata__xarray-3364",
+    "repo": "pydata/xarray",
+    "resolved": false,
+    "agent_seconds": 0.2,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
+  },
+  {
+    "instance_id": "pallets__flask-4992",
+    "repo": "pallets/flask",
+    "resolved": false,
+    "agent_seconds": 0.2,
+    "agent": {
+      "runtime_status": "INFRA_ERROR",
+      "token_usage": {
+        "total": 0
+      },
+      "model_calls": 0
+    },
+    "judge": {
+      "outcome": "INCONCLUSIVE",
+      "reason": "WorkspacePreparationError: docker run (extract) failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot f",
+      "patch_applied": false,
+      "f2p_failures": [],
+      "p2p_regressions": []
+    },
+    "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pallets__flask-4992"
+  }
+]
