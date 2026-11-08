@@ -103,6 +103,7 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
     workspace = DockerWorkspace(
         handle.task_dir, run_id, base_commit=handle.base_commit, cli=cli,
         command_timeout_seconds=config.command_timeout_seconds,
+        command_policy=config.command_policy,
     )
     preflight = PreflightRunner(cli=cli)
     report = preflight.run(workspace, task_spec.test_command)
@@ -165,11 +166,12 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
     runner = AgentRunner(
         run_id=run_id, task=task_spec, config=config,
         model_client=adapter, registry=registry,
-        dispatcher=ToolDispatcher(registry, workspace),
+        dispatcher=ToolDispatcher(registry, workspace, command_policy=config.command_policy),
         store=store, verifier=verifier, clock=SystemClock(),
         patch_hash_provider=lambda: workspace.get_changes()["patch_hash"],  # 评审 P0-3
         preflight_summary={
             "steps": "ok",
+            "command_policy": config.command_policy,
             "test_plan": report.test_plan,
             "test_plan_source": report.test_plan_source,
             "test_plan_evidence": report.test_plan_evidence,
@@ -242,6 +244,9 @@ def run(
     timeout: int = typer.Option(1200, "--timeout", min=1, help="单任务执行时限（秒）"),
     review: bool = typer.Option(False, "--review/--no-review", help="启用 Read-only Review Agent"
                                 "（默认关闭 = 单 Agent Baseline；Experiment G 用不同取值运行）"),
+    command_policy: str = typer.Option("strict", "--command-policy",
+                                       help="命令权限档位：strict（v0 白名单）/ coding_benchmark"
+                                            "（追加受控只读命令 grep/rg/ls）"),
 ) -> None:
     """一次性任务执行：输入任务 → 自主修复 → 输出 Patch / Trace / 报告。"""
     try:
@@ -261,6 +266,7 @@ def run(
         max_duration_seconds=timeout,
         review_enabled=review,  # --review 启用双 Agent（默认 False = 单 Agent Baseline，可复现）
         output_dir=str(output_dir),
+        command_policy=command_policy,
         # Context Budget 生产启用（评审 P0-1）：已验证模型的窗口来自 profile；未知模型不虚构容量
         context_window_tokens=resolve_context_window(model),
     )

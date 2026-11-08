@@ -20,15 +20,18 @@ import uuid
 from pathlib import Path
 
 from repofix.contracts import ModelRequest
-from repofix.evaluation.swebench.judge import run_judge
-from repofix.evaluation.swebench.plan import derive_visible_plan, locate_source_files, extract_identifiers, _tracked_py_files
+from repofix.evaluation.swebench.judge import _strip_ansi, run_judge
+from repofix.evaluation.swebench.plan import (
+    _tracked_py_files,
+    extract_identifiers,
+    locate_source_files,
+)
 from repofix.evaluation.swebench.workspace import (
     extract_testbed,
     force_rmtree,
     run_install_commands,
     start_eval_container,
 )
-from repofix.evaluation.swebench.judge import _strip_ansi
 from repofix.gateway.adapter import DeepSeekAdapter
 from repofix.gateway.client import ModelProtocolError
 from repofix.workspace.docker_cli import DockerCli
@@ -92,10 +95,10 @@ def extract_diff(response_text: str) -> str:
     text = fenced if fenced is not None else response_text
     lines = text.splitlines()
     if any(line.startswith("diff --git ") for line in lines):
-        starts = [i for i, l in enumerate(lines) if l.startswith("diff --git ")]
+        starts = [i for i, ln in enumerate(lines) if ln.startswith("diff --git ")]
         return "\n".join(lines[starts[0]:]).strip()
     if any(line.startswith("--- ") for line in lines) and any(line.startswith("+++ ") for line in lines):
-        first = next(i for i, l in enumerate(lines) if l.startswith("--- "))
+        first = next(i for i, ln in enumerate(lines) if ln.startswith("--- "))
         return "\n".join(lines[first:]).strip()
     return ""
 
@@ -151,7 +154,7 @@ def run_control_task(
             )
             try:
                 response = adapter.complete(request)
-            except ModelProtocolError as exc:
+            except ModelProtocolError:
                 # 输出超长（finish_reason=length）是可反馈的轮次失败，不是任务致命错误：
                 # 无工具模型倾向整文件重写，应反馈"输出最小化 diff"后重试
                 last_feedback = ("Your previous response was rejected: it exceeded the "

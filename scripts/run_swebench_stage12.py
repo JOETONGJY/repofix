@@ -27,8 +27,8 @@ from pathlib import Path
 from repofix.contracts import RunConfig
 from repofix.evaluation.swebench import dataset, runner
 from repofix.evaluation.swebench.runner import EvalBudgetExceeded, summarize
-from repofix.workspace.docker_cli import DockerCli
 from repofix.evaluation.swebench.workspace import download_rg
+from repofix.workspace.docker_cli import DockerCli
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = REPO_ROOT / "repofix-data" / "swebench"
@@ -64,6 +64,10 @@ def main() -> int:
     parser.add_argument("--command-timeout", type=int, default=600)
     parser.add_argument("--only", nargs="*", default=None, help="run a subset of frozen instances")
     parser.add_argument("--keep-testbeds", action="store_true")
+    parser.add_argument("--command-policy", default="strict", choices=("strict", "coding_benchmark"),
+                        help="RepoFix v1 起使用 coding_benchmark（受控只读命令）")
+    parser.add_argument("--context-recent-full-turns", type=int, default=0,
+                        help="Context 近期完整窗口（v1 建议 12；0 = 关闭 = v0 行为）")
     args = parser.parse_args()
 
     if not args.approve_tokens:
@@ -106,6 +110,8 @@ def main() -> int:
         review_enabled=False,  # Stage 1/2 单 Agent 基线（Stage 3 另行批准）
         context_window_tokens=131072,
         output_reserve_tokens=4096,
+        command_policy=args.command_policy,
+        context_recent_full_turns=args.context_recent_full_turns,
         **config_kwargs,
     )
     print(f"[stage12] stage={args.stage} instances={[m['instance_id'] for m in instances]}")

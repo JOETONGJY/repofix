@@ -11,6 +11,7 @@
 diff)，本模块的 compute_patch_hash 是唯一生成函数，贯穿 Verifier / Reviewer / RunResult。
 """
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -25,7 +26,8 @@ from repofix.workspace.errors import WorkspaceError
 from repofix.workspace.pathsafe import PathEscapeError, display_rel, safe_resolve
 
 # 显式命令白名单（specs/03；模型不能自行扩展——扩展需显式策略变更）
-ALLOWED_COMMANDS: list[tuple[str, ...]] = [
+# strict 档：测试/静态检查（v0 基线口径，保持旧实验可复现）
+STRICT_COMMANDS: list[tuple[str, ...]] = [
     ("pytest",),
     ("python", "-m", "pytest"),
     ("python3", "-m", "pytest"),
@@ -35,6 +37,64 @@ ALLOWED_COMMANDS: list[tuple[str, ...]] = [
     ("python3", "-m", "compileall"),
     ("ruff",),
 ]
+ALLOWED_COMMANDS = STRICT_COMMANDS  # 向后兼容别名（specs/03 原名）
+
+# coding_benchmark 档的受控只读层：Trace 实证模型高频请求 grep/ls 被拒
+# （5/8 任务命中），造成调用浪费与批次级联。只读、无网沙箱内执行，风险可控。
+READONLY_TIER_PROGRAMS = ("grep", "rg", "ls")
+
+# 只读层危险参数块名单（能执行外部程序或读取工作区外文件的入口）
+_READONLY_BLOCKED_FLAGS = {
+    "grep": {"-f", "--file"},
+    "rg": {"-f", "--file", "--pre", "--pre-glob", "--hostname-bin", "--pager"},
+    "ls": set(),
+}
+
+
+def is_readonly_intent_command(argv: list[str]) -> bool:
+    """argv 是否为只读层命令的意图（无论参数是否合法——供 Scheduler 判定级联）。"""
+    return bool(argv) and argv[0] in READONLY_TIER_PROGRAMS
+
+
+def validate_readonly_command(argv: list[str]) -> str | None:
+    """只读层参数级校验。返回 None = 通过；否则返回拒绝原因。
+
+    约束（GPT 评审 P0-1）：限制读取路径在工作区内（拒绝绝对路径/..）、禁止
+    能执行外部程序的入口（rg --pre、grep -f 等）、argv 数组无 Shell。
+    """
+    program = argv[0] if argv else ""
+    blocked = _READONLY_BLOCKED_FLAGS.get(program, set())
+    for token in argv[1:]:
+        if token.startswith("-"):
+            # 选项：块名单 + 组合短选项中出现被禁字母（如 grep -lf）
+            if token in blocked:
+                return f"option not allowed for {program}: {token}"
+            if token.startswith("--"):
+                continue
+            if program in ("grep", "rg") and any(ch in token.lstrip("-") for ch in "fdzP"):
+                # -f 读模式文件 / -d 目录动作 / -z 压缩输入 / -P 可能引入外部引擎语义
+                return f"option not allowed for {program}: {token}"
+            continue
+        # 操作数（文件/目录/模式）：必须相对且不逃逸
+        if token.startswith("/") or token.startswith("~"):
+            return f"absolute paths are not allowed: {token}"
+        if ".." in Path(token).parts:
+            return f"path traversal is not allowed: {token}"
+    return None
+
+
+def check_command_allowed(argv: list[str], policy: str = "strict") -> bool:
+    """argv 前缀匹配白名单（精确元组匹配，不做字符串包含判断）。
+
+    policy: strict = 仅测试/静态检查（v0 口径）；coding_benchmark = 追加受控
+    只读探索命令（grep/rg/ls，经参数级校验）。
+    """
+    for allowed in STRICT_COMMANDS:
+        if len(argv) >= len(allowed) and tuple(argv[: len(allowed)]) == allowed:
+            return True
+    if policy == "coding_benchmark" and is_readonly_intent_command(argv):
+        return validate_readonly_command(argv) is None
+    return False
 
 # read_file 文件限制：二进制 / 超大文件明确拒绝（specs/03）
 READ_MAX_BYTES = 2 * 1024 * 1024
@@ -54,35 +114,48 @@ _DIFF_EXCLUDES = [
 ]
 
 
-def check_command_allowed(argv: list[str]) -> bool:
-    """argv 前缀匹配白名单（精确元组匹配，不做字符串包含判断）。"""
-    for allowed in ALLOWED_COMMANDS:
-        if len(argv) >= len(allowed) and tuple(argv[: len(allowed)]) == allowed:
-            return True
-    return False
+def build_rg_argv(pattern: str, path: str, regex: bool, glob: str | None, limit: int,
+                  max_per_file: int = 5, context: int = 0) -> list[str]:
+    """ripgrep 参数数组——底层 rg，不经 Shell 字符串拼接（specs/03）。
 
-
-def build_rg_argv(pattern: str, path: str, regex: bool, glob: str | None, limit: int) -> list[str]:
-    """ripgrep 参数数组——底层 rg，不经 Shell 字符串拼接（specs/03）。"""
-    argv = ["rg", "--no-heading", "--with-filename", "--line-number", "--color", "never", "--max-count", "1"]
+    max_per_file：每文件最多报告的匹配数（v0 固定 1，实测导致模型为同文件
+    其他匹配重复搜索）；context：每条匹配的后续上下文行数（默认 0，控制
+    输出 Token）。
+    """
+    argv = ["rg", "--no-heading", "--with-filename", "--line-number", "--color", "never",
+            "--max-count", str(max(1, int(max_per_file)))]
     if not regex:
         argv.append("--fixed-strings")
     if glob:
         argv += ["--glob", glob]
+    if context > 0:
+        argv += ["-A", str(int(context))]
     # "--" 结束选项解析：以 - 开头的搜索词不会被误当作 rg 选项
     argv += ["--max-filesize", "2M", "--", pattern, path]
     return argv
 
 
 def parse_rg_output(stdout: str, limit: int) -> tuple[list[dict], bool]:
-    """解析 rg 行输出为 [{path, line, match_text}]；返回 (matches, truncated)。"""
+    """解析 rg 行输出为 [{path, line, match_text}]；返回 (matches, truncated)。
+
+    两种行格式：匹配行 `path:12:content`、上下文行 `path-12-content`（rg -A
+    输出，分隔符为连字符）。上下文行的路径含连字符时按首个 `-数字-` 切分。
+    """
     matches: list[dict] = []
     truncated = False
+    context_re = re.compile(r"^(.+?)-(\d+)-(.*)$")
     for line in stdout.splitlines():
         if not line.strip():
             continue
         parts = line.split(":", 2)
         if len(parts) < 3:
+            m = context_re.match(line)
+            if not m:
+                continue
+            if len(matches) >= limit:
+                truncated = True
+                break
+            matches.append({"path": m.group(1), "line": int(m.group(2)), "match_text": m.group(3)})
             continue
         if len(matches) >= limit:
             truncated = True
@@ -91,6 +164,49 @@ def parse_rg_output(stdout: str, limit: int) -> tuple[list[dict], bool]:
             {"path": parts[0], "line": int(parts[1]) if parts[1].isdigit() else None, "match_text": parts[2]}
         )
     return matches, truncated
+
+
+# list_files 遍历时剪枝的目录名（真实仓库的构建/工具产物，剪掉后大仓库不再
+# 全树扫描——GPT 评审 P0-2）
+LIST_FILES_PRUNE_DIRS = {
+    ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".tox", ".nox", "node_modules", "build", "dist", "htmlcov", ".coverage",
+    ".venv", "venv", "target", ".eggs", "src.egg-info",
+}
+
+
+def iter_workspace_files(root: Path, max_depth: int, limit: int) -> tuple[list[Path], bool]:
+    """在 root 内做带剪枝的确定性遍历，返回 (文件列表, 是否被 limit 截断)。
+
+    os.scandir 递归（不 materialize 全树），目录与文件均按名称排序保证输出
+    确定性；命中 limit 即停止。
+    """
+    files: list[Path] = []
+
+    def walk(directory: Path, depth: int) -> bool:
+        if depth > max_depth or len(files) >= limit:
+            return len(files) >= limit
+        try:
+            entries = sorted(directory.iterdir(), key=lambda p: p.name)
+        except OSError:
+            return False
+        for entry in entries:
+            if len(files) >= limit:
+                return True
+            if entry.name in LIST_FILES_PRUNE_DIRS:
+                continue
+            try:
+                if entry.is_dir():
+                    if walk(entry, depth + 1):
+                        return True
+                elif entry.is_file():
+                    files.append(entry)
+            except OSError:
+                continue
+        return False
+
+    walk(root, 0)
+    return files, len(files) >= limit
 
 
 class DockerWorkspace:
@@ -107,6 +223,7 @@ class DockerWorkspace:
         read_only: bool = False,
         command_timeout_seconds: int = 120,
         workspace_mount: str = CONTAINER_WORKSPACE_MOUNT,
+        command_policy: str = "strict",
     ):
         self.task_dir = Path(task_dir)
         self.run_id = run_id
@@ -118,6 +235,9 @@ class DockerWorkspace:
         self._command_timeout = command_timeout_seconds
         # 容器内工作区挂载点：默认 /workspace；SWE-bench 评测挂官方镜像的 /testbed
         self._mount = workspace_mount
+        # 命令权限档位：strict（v0 基线）/ coding_benchmark（追加受控只读命令）。
+        # 启动时确定并写入 Trace，运行期不可被模型修改。
+        self.command_policy = command_policy
         self._container_up = False
         self._full_outputs: dict[str, tuple[str, str]] = {}
 
@@ -174,7 +294,7 @@ class DockerWorkspace:
             self.task_dir, self.run_id, base_commit=self.base_commit,
             cli=self._cli, container_name=self.container_name,
             read_only=True, command_timeout_seconds=self._command_timeout,
-            workspace_mount=self._mount,
+            workspace_mount=self._mount, command_policy=self.command_policy,
         )
         readonly._container_up = self._container_up  # noqa: SL001 —— 同进程受控共享
         return readonly
@@ -190,35 +310,26 @@ class DockerWorkspace:
         if not root.is_dir():
             return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
                               error_code=ToolErrorCode.EXECUTION_ERROR, error_message=f"not a directory: {path}")
-        # 严格限定在目标目录内遍历（path="src" 不得返回其他目录的文件）
+        # 严格限定在目标目录内遍历（path="src" 不得返回其他目录的文件）；
+        # 带剪枝的确定性遍历（构建产物目录不进入——大仓库不再全树扫描）
         task_root = self.task_dir.resolve()
-        files: list[str] = []
-        truncated = False
-        for item in sorted(root.rglob("*")):
-            rel = item.relative_to(root)
-            if ".git" in rel.parts:
-                continue
-            if len(rel.parts) > max_depth:
-                continue
-            if item.is_file():
-                if len(files) >= limit:
-                    truncated = True
-                    break
-                # 输出保持相对任务副本根
-                files.append(item.relative_to(task_root).as_posix())
+        found, truncated = iter_workspace_files(root, max_depth, limit)
+        files = [p.relative_to(task_root).as_posix() for p in found]
         content = "\n".join(files) if files else "(no files)"
         content += f"\n[{len(files)} files" + (", truncated]" if truncated else "]")
         return ToolResult(call_id="pending", status=ExecutionStatus.SUCCEEDED, content=content, truncated=truncated)
 
     def search_code(self, pattern: str, path: str = ".", regex: bool = False,
-                    glob: str | None = None, limit: int = 100) -> ToolResult:
+                    glob: str | None = None, limit: int = 100,
+                    max_per_file: int = 5, context: int = 0) -> ToolResult:
         try:
             search_root = safe_resolve(self.task_dir, path)
         except PathEscapeError as exc:
             return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
                               error_code=ToolErrorCode.INVALID_ARGUMENT, error_message=str(exc))
         rel = display_rel(self.task_dir, search_root)
-        argv = build_rg_argv(pattern, rel, regex, glob, limit)
+        argv = build_rg_argv(pattern, rel, regex, glob, limit,
+                             max_per_file=max_per_file, context=context)
         try:
             outcome = self._run_in_container(argv, cwd_in_container=self._mount,
                                              timeout=self._command_timeout)
@@ -343,12 +454,14 @@ class DockerWorkspace:
             return ToolResult(call_id=call_id, status=ExecutionStatus.FAILED,
                               error_code=ToolErrorCode.PERMISSION_DENIED,
                               error_message="read-only workspace cannot run commands")
-        if not check_command_allowed(argv):
+        if not check_command_allowed(argv, self.command_policy):
             return ToolResult(call_id=call_id, status=ExecutionStatus.FAILED,
                               error_code=ToolErrorCode.PERMISSION_DENIED,
                               error_message=(
-                                  f"command not allowed: {argv[:2]}; allowed: pytest, python -m pytest, "
-                                  "python -m unittest, python -m compileall, ruff"
+                                  f"command not allowed (policy={self.command_policy}): {argv[:2]}; "
+                                  "allowed: pytest, python -m pytest, python -m unittest, "
+                                  "python -m compileall, ruff"
+                                  + (", grep, rg, ls" if self.command_policy == "coding_benchmark" else "")
                               ))
         try:
             cwd_abs = safe_resolve(self.task_dir, cwd)

@@ -14,7 +14,6 @@
 """
 import re
 import subprocess
-import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -165,7 +164,12 @@ def run_judge(
             record.reason = f"testbed extraction failed: {exc}"
             return record
 
-        if patch_path is not None and Path(patch_path).exists() and Path(patch_path).read_text(encoding="utf-8").strip():
+        has_patch = (
+            patch_path is not None
+            and Path(patch_path).exists()
+            and Path(patch_path).read_text(encoding="utf-8").strip()
+        )
+        if has_patch:
             apply = _git(["apply", str(Path(patch_path).resolve())], ws)
             record.patch_apply_rc = apply.returncode
             record.patch_applied = apply.returncode == 0
@@ -238,8 +242,8 @@ def run_judge(
         collection_interrupted = (
             "errors during collection" in combined_text
             or "Interrupted:" in combined_text
-            or bool([l for l in combined_text.splitlines()
-                     if l.startswith("ERROR ") and "::" not in l])
+            or bool([line for line in combined_text.splitlines()
+                     if line.startswith("ERROR ") and "::" not in line])
         )
 
         statuses = parse_short_summary(combined_text)
@@ -265,10 +269,12 @@ def run_judge(
                 "no test statuses parsed and test command failed; parser or env mismatch")
             return record
         # 收集中断时收紧 silent-success：缺席不再视为通过
-        official_failed = lambda tid: (
-            statuses.get(tid) in ("FAILED", "ERROR")
-            or (collection_interrupted and statuses.get(tid) is None)
-        )  # noqa: E731
+        def _official_failed(tid: str) -> bool:
+            if statuses.get(tid) in ("FAILED", "ERROR"):
+                return True
+            return collection_interrupted and statuses.get(tid) is None
+
+        official_failed = _official_failed
         record.f2p_results = {tid: statuses.get(tid, "SILENT_PASS") for tid in fail_to_pass}
         record.f2p_failures = [tid for tid in fail_to_pass if official_failed(tid)]
         record.p2p_regressions = [tid for tid in pass_to_pass if official_failed(tid)]

@@ -86,7 +86,7 @@ class _Turn:
         self.response = response
         self.results_by_id: dict[str, ToolResult] = {result.call_id: result for result in results}
 
-    def render(self, soft_chars: int, emergency: bool = False) -> list[dict]:
+    def render(self, soft_chars: int, emergency: bool = False, elide: bool = False) -> list[dict]:
         response = self.response
         entry: dict = {"role": "assistant"}
         if response.message and response.message.get("content"):
@@ -109,9 +109,25 @@ class _Turn:
                 for call in response.tool_calls
             ]
             entry.setdefault("content", None)
+        if elide:
+            # 旧轮次的 assistant 消息同样摘要：Trace 分析（600k 档）证明 prompt 的
+            # 大头是模型自身历史输出（apply_patch 的整段 diff 原文等 completion
+            # 内容逐轮重发计费），仅占位工具结果省不出成本。保留 tool_calls 的
+            # id/name（配对必需），arguments 置空对象（合法 JSON 占位）。
+            entry["content"] = "[earlier turn elided by context-recency policy]"
+            entry.pop("reasoning_content", None)
+            for tc in entry.get("tool_calls") or []:
+                tc["function"]["arguments"] = "{}"
         messages = [entry]
         for call in response.tool_calls:
             result = self.results_by_id[call.call_id]  # record_results 已校验齐全
+            if elide:
+                # 工具结果同样占位：保留 tool_call_id 配对与状态/工具名
+                raw_len = len(render_tool_result(result))
+                text = (f"[output elided ({raw_len} chars): {call.tool_name}"
+                        f" {result.status.value}; context-recency policy]")
+                messages.append({"role": "tool", "tool_call_id": result.call_id, "content": text})
+                continue
             text = render_tool_result(result)
             body, metadata = _split_read_metadata(text, call.tool_name)
             if emergency:
@@ -158,11 +174,15 @@ class ContextBuilder:
         output_reserve_tokens: int = 4096,
         tool_output_soft_chars: int = 2000,
         tools_payload: list[dict] | None = None,
+        recent_full_turns: int = 0,
     ):
         self._system_rules = system_rules
         self._window = context_window_tokens
         self._reserve = output_reserve_tokens
         self._soft_chars = tool_output_soft_chars
+        # 近期完整窗口（P0-3）：最近 N 个轮次保留完整工具输出，更早轮次摘要为
+        # 占位。0 = 关闭（v0 行为）。确定性策略，无 LLM Summary。
+        self._recent_full_turns = max(0, int(recent_full_turns))
         self._budget = None
         if context_window_tokens is not None:
             # 工具 Schema 属于最终 ModelRequest 的固定开销，计入预算（评审 P0-2）
@@ -275,9 +295,14 @@ class ContextBuilder:
 
     def _render_all(self, emergency: bool) -> list[dict]:
         messages: list[dict] = []
-        for kind, entry in self._entries:
+        turn_positions = [i for i, (kind, _) in enumerate(self._entries) if kind == "turn"]
+        elide_before = 0
+        if self._recent_full_turns > 0 and len(turn_positions) > self._recent_full_turns:
+            elide_before = turn_positions[len(turn_positions) - self._recent_full_turns]
+        for i, (kind, entry) in enumerate(self._entries):
             if kind == "turn":
-                messages.extend(entry.render(self._soft_chars, emergency=emergency))
+                messages.extend(entry.render(self._soft_chars, emergency=emergency,
+                                             elide=i < elide_before))
             elif kind == "pending_turn":
                 raise ContextPairingError("pending turn without results during rendering")
             else:

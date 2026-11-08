@@ -109,7 +109,7 @@ def funnel(rows: list[dict]) -> dict:
         if row["log_parser"] in EXCLUDED_PARSERS:
             counts["R1_repo_parser"] += 1
             continue
-        from repofix.evaluation.swebench.dataset import patch_files, parse_test_list
+        from repofix.evaluation.swebench.dataset import parse_test_list, patch_files
 
         if len(patch_files(row["patch"])) != 1:
             counts["R2_single_file"] += 1

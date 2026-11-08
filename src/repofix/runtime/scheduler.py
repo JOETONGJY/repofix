@@ -8,6 +8,8 @@ Runtime 拥有调度权。按模型返回顺序逐个执行，不做依赖推断
 - 只读失败：后续只读可继续，其后写入类一律 SKIPPED（batch_aborted_after_read_failure）；
 - 写入类失败：本批次剩余全部 SKIPPED（batch_aborted_after_write_failure）；
 - 校验 / 权限拒绝同样触发批次失败传播（按副作用类别判定，V0.2 规则 5）；
+  修订（工具效率 v1）：只读意图命令（grep/rg/ls）的校验期拒绝例外——命令未执行、
+  无副作用，不级联；执行期失败的传播语义不变；
 - 执行器异常 → side_effect_status=UNKNOWN（副作用可能已发生），剩余调用不执行、
   Run 终止，不自动重试（V0.2 规则 8）；
 - 意图先行：执行前先持久化执行意图（start_tool_call），意图未成功持久化不执行
@@ -106,14 +108,19 @@ class ToolBatchScheduler:
 
             validation_error = self._dispatcher.validate(call, actor)
             if validation_error is not None:
-                # 校验/权限拒绝：未实际执行，但批次失败传播照常生效（V0.2 规则 5）
+                # 校验/权限拒绝：未实际执行，但批次失败传播照常生效（V0.2 规则 5）。
+                # 修订（工具效率 v1，GPT 评审 P1-1）：只读意图命令（grep/rg/ls）的
+                # 校验期拒绝例外——命令从未执行、无任何副作用，级联只会浪费同批
+                # 后续合法调用（600k 档 Trace 实证：grep/ls 拒绝触发 2 次级联）。
+                # 执行期失败（真实运行过）的传播语义不变。
                 outcome.results.append(
                     self._record_skipped_with_result(call, step, decision_id, validation_error, ts)
                 )
-                if side in (ToolSideEffect.WRITE, ToolSideEffect.PROCESS):
-                    abort_reason = "batch_aborted_after_write_failure"
-                else:
-                    read_failure_seen = True
+                if not getattr(self._dispatcher, "is_readonly_intent_rejection", lambda c: False)(call):
+                    if side in (ToolSideEffect.WRITE, ToolSideEffect.PROCESS):
+                        abort_reason = "batch_aborted_after_write_failure"
+                    else:
+                        read_failure_seen = True
                 continue
 
             result, side_effect_unknown = self._execute_one(call, step, decision_id, ts)

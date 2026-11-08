@@ -84,7 +84,6 @@ def extract_testbed(cli: DockerCli, image: str, dest_dir: Path,
     `git checkout --detach <base_commit>`，与 WorkspaceManager 的快照语义一致。
     """
     import subprocess
-    import tarfile
 
     dest_dir = Path(dest_dir)
     if any(dest_dir.iterdir()):
@@ -343,7 +342,7 @@ def verify_extracted_workspace(cli: DockerCli, container: str, testbed: Path,
         "head_matches_base": head_ok,
         "head": head.stdout.strip()[:12],
         "worktree_clean": clean_ok,
-        "untracked_entries": len([l for l in status_all.stdout.splitlines() if l.strip()]),
+        "untracked_entries": len([ln for ln in status_all.stdout.splitlines() if ln.strip()]),
         **env_probe,
     }
 

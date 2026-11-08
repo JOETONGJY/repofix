@@ -82,10 +82,16 @@ class ToolDispatcher:
         registry: ToolRegistry,
         executor: ToolExecutor,
         content_limit_bytes: int = DEFAULT_CONTENT_LIMIT_BYTES,
+        command_policy: str | None = None,
     ):
         self._registry = registry
         self._executor = executor
         self._content_limit_bytes = content_limit_bytes
+        # 命令权限档位（P1-1 前移）：run_command 的白名单校验从 Workspace 执行期
+        # 前移到 Dispatcher 语义校验期——拒绝发生在任何执行之前（无副作用），
+        # Scheduler 据此不再对只读意图命令级联中止批次；Workspace 保留同款
+        # 校验作为纵深防御。
+        self.command_policy = command_policy
 
     def validate(self, call: ToolCall, actor: AgentActor) -> ToolResult | None:
         """返回错误 ToolResult；None 表示通过校验（可进入意图持久化与执行）。
@@ -118,7 +124,38 @@ class ToolDispatcher:
                 error_code=ToolErrorCode.INVALID_ARGUMENT,
                 error_message=f"invalid arguments for {call.tool_name}: {exc.error_count()} error(s)",
             )
+        # 命令权限档位校验（语义阶段，Schema 之后）：拒绝发生在执行前
+        if (
+            self.command_policy
+            and call.tool_name == "run_command"
+            and isinstance(call.arguments.get("argv"), list)
+        ):
+            from repofix.workspace.docker_workspace import check_command_allowed
+
+            argv = call.arguments["argv"]
+            if not check_command_allowed([str(a) for a in argv], self.command_policy):
+                return ToolResult(
+                    call_id=call.call_id,
+                    status=ExecutionStatus.FAILED,
+                    error_code=ToolErrorCode.PERMISSION_DENIED,
+                    error_message=(
+                        f"command not allowed (policy={self.command_policy}): {argv[:2]}"
+                    ),
+                )
         return None
+
+    def is_readonly_intent_rejection(self, call: ToolCall) -> bool:
+        """校验阶段被拒的调用是否为只读意图命令（grep/rg/ls）。
+
+        只读意图命令在语义校验期被拒（如危险参数、越权路径）——命令从未执行、
+        无任何副作用，Scheduler 据此不做批次级联。懒加载避免与 workspace 循环导入。
+        """
+        if call.tool_name != "run_command" or not isinstance(call.arguments, dict):
+            return False
+        from repofix.workspace.docker_workspace import is_readonly_intent_command
+
+        argv = call.arguments.get("argv", [])
+        return is_readonly_intent_command([str(a) for a in argv] if isinstance(argv, list) else [])
 
     def execute(self, call: ToolCall) -> ToolResult:
         """执行单个已通过 validate() 校验的调用。副作用意图必须已由 Scheduler 持久化。

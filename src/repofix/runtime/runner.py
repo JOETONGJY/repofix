@@ -49,7 +49,10 @@ from repofix.verifier.base import Verifier
 DEFAULT_SYSTEM_RULES = (
     "You are RepoFix Main Coding Agent. Fix the reported bug in the task workspace: "
     "locate relevant code with search/list/read, modify files with apply_patch, "
-    "and validate with run_command. Submit finish (alone in its batch) when the fix is complete."
+    "and validate with run_command. Submit finish (alone in its batch) when the fix is complete. "
+    "Use the structured tools first: search_code for code search (supports multiple matches "
+    "per file and context lines), list_files for directories, read_file with line ranges for "
+    "exact reading. If your command policy allows grep/rg/ls, use them only as a supplement."
 )
 
 
@@ -89,6 +92,7 @@ class AgentRunner:
             output_reserve_tokens=config.output_reserve_tokens,
             tool_output_soft_chars=config.tool_output_truncate_chars,
             tools_payload=self._registry.view_for(AgentActor.MAIN),
+            recent_full_turns=config.context_recent_full_turns,
         )
         self.budget = BudgetTracker(config, clock)  # 公开：CLI 组装 Gateway 预算钩子时使用
         self._budget = self.budget

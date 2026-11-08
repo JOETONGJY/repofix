@@ -74,6 +74,12 @@ class RunConfig(BaseModel):
     # —— Context Engine（design/07：B_input = B_context − B_output_reserve − B_safety；None = 不裁剪）——
     context_window_tokens: int | None = None
     output_reserve_tokens: int = Field(default=4096, ge=0)
+    # 近期完整窗口（工具效率 v1）：最近 N 个模型-工具轮次保留完整工具输出，更早
+    # 轮次确定性摘要为占位（Call/Result 配对完整保留）。0 = 关闭（v0 行为）。
+    context_recent_full_turns: int = Field(default=0, ge=0)
+    # 命令权限档位（工具效率 v1）：strict（v0 白名单）/ coding_benchmark（追加
+    # 受控只读命令 grep/rg/ls）。任务启动时确定并写入 Trace，模型运行期不可修改。
+    command_policy: str = "strict"
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
     review_enabled: bool = True
     max_reviewer_model_calls: int = Field(default=3, ge=1)

@@ -43,6 +43,10 @@ class SearchCodeArgs(_StrictModel):
     regex: bool = False  # 默认普通字符串搜索，显式 true 才启用正则
     glob: str | None = None
     limit: int = Field(default=100, ge=1, le=500)
+    # 每文件最多报告的匹配数（v0 固定 1 隐藏同文件后续匹配，实测造成重复搜索）
+    max_per_file: int = Field(default=5, ge=1, le=50)
+    # 每条匹配的后续上下文行数（0 = 不带上下文，控制输出 Token）
+    context: int = Field(default=0, ge=0, le=5)
 
 
 class ReadFileArgs(_StrictModel):
@@ -152,7 +156,9 @@ def register_default_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolSpec(
             "search_code",
-            "Search code by literal string (default) or regex within the workspace.",
+            "Search code by literal string (default) or regex within the workspace. "
+            "Reports up to max_per_file matches per file (use a higher value to see all "
+            "occurrences in one call) with optional trailing context lines.",
             SearchCodeArgs,
             ToolSideEffect.READ_ONLY,
             read_actors,
@@ -179,7 +185,11 @@ def register_default_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolSpec(
             "run_command",
-            "Run an allow-listed command (argv array) inside the sandboxed workspace.",
+            "Run an allow-listed command (argv array) inside the sandboxed workspace. "
+            "Policy tiers: strict = pytest/unittest/compileall/ruff only; coding_benchmark "
+            "additionally allows read-only exploration commands (grep/rg/ls, workspace-"
+            "relative paths, no external execution). Prefer search_code/list_files for "
+            "structured retrieval; these commands are a supplement.",
             RunCommandArgs,
             ToolSideEffect.PROCESS,
             {AgentActor.MAIN},

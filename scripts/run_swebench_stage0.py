@@ -30,15 +30,15 @@ from pathlib import Path
 from repofix.evaluation.swebench import dataset, plan, selection
 from repofix.evaluation.swebench.judge import extract_eval_commands, run_judge
 from repofix.evaluation.swebench.workspace import (
+    WorkspacePreparationError,
     build_agent_image,
-    run_install_commands,
     download_rg,
     force_rmtree,
     image_digest,
+    run_install_commands,
     start_eval_container,
     top_level_package,
     verify_extracted_workspace,
-    WorkspacePreparationError,
 )
 from repofix.workspace.docker_cli import DockerCli
 
@@ -64,7 +64,6 @@ def _check_instance(cli: DockerCli, meta: dict, row: dict, rg_path: Path,
     testbed.parent.mkdir(parents=True, exist_ok=True)
     container = f"sweb-preflight-{instance_id}"
 
-    import shutil
     try:
         # 1. 镜像 + Digest
         t0 = time.time()

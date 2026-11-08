@@ -528,3 +528,57 @@ class TestM3PolishWiring:
         assert result.runtime_status is RunStatus.COMPLETED
         types_without = [e.type for e in store_without.get_events("run_pf")]
         assert EventType.PREFLIGHT_COMPLETED not in types_without
+
+
+class TestRecencyWindow:
+    """工具效率 v1：近期完整窗口——旧轮次工具输出确定性摘要，配对完整保留。"""
+
+    def _build_with_turns(self, recent_full_turns: int, n_turns: int = 6, body: str = "x" * 300):
+        builder = build_builder(recent_full_turns=recent_full_turns)
+        for i in range(n_turns):
+            calls = [ToolCall(call_id=f"c{i}", tool_name="read_file",
+                              arguments={"path": f"f{i}.py"})]
+            results = [read_result(f"c{i}", f"f{i}.py", body, f"sha{i}")]
+            add_turn(builder, f"dec{i}", calls, results)
+        return builder
+
+    def test_old_turns_elided_recent_full(self):
+        builder = self._build_with_turns(recent_full_turns=2, n_turns=6)
+        messages = builder.next_messages(WorkingState(run_id="r"))
+        rendered = json.dumps(messages, ensure_ascii=False)
+        # 最近 2 轮保留完整内容
+        assert '"x' + 'x' * 299 + '"' not in rendered  # 防误报占位检查
+        full_bodies = sum(1 for m in messages if "x" * 300 in str(m.get("content", "")))
+        assert full_bodies == 2
+        # 旧轮次占位化：状态与工具名保留
+        assert "[output elided" in rendered
+        assert rendered.count("[output elided") == 4
+        assert "read_file" in rendered
+
+    def test_pairing_intact_after_elide(self):
+        """旧轮次占位化后 assistant tool_calls 与 tool 结果仍一一配对。"""
+        builder = self._build_with_turns(recent_full_turns=1, n_turns=5)
+        messages = builder.next_messages(WorkingState(run_id="r"))
+        call_ids = []
+        for m in messages:
+            if m.get("tool_calls"):
+                call_ids += [tc["id"] for tc in m["tool_calls"]]
+        tool_ids = [m["tool_call_id"] for m in messages if m.get("role") == "tool"]
+        assert call_ids == tool_ids and len(call_ids) == 5
+
+    def test_disabled_by_default(self):
+        builder = self._build_with_turns(recent_full_turns=0, n_turns=4)
+        messages = builder.next_messages(WorkingState(run_id="r"))
+        assert "[output elided" not in json.dumps(messages, ensure_ascii=False)
+
+    def test_zero_context_budget_scenario(self):
+        """预算裁剪与近期窗口叠加时不抛错（emergency 路径兼容）。"""
+        builder = ContextBuilder("system rules", context_window_tokens=1200,
+                                 output_reserve_tokens=100, recent_full_turns=2)
+        builder.start_task("Fix the login validation bug", base_commit="abc123")
+        for i in range(4):
+            calls = [ToolCall(call_id=f"c{i}", tool_name="read_file", arguments={"path": "f.py"})]
+            add_turn(builder, f"dec{i}", calls, [read_result(f"c{i}", "f.py", "x" * 500, "sha")])
+        state = WorkingState(run_id="r")
+        messages = builder.next_messages(state)  # 触发压缩也不应抛 ContextPairingError
+        assert messages

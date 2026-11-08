@@ -186,10 +186,9 @@ def _test_targets_for_source(source_rel: str, py_files: list[str], testbed: Path
         for segment in ("tests", "testing"):
             candidate_dir = ancestor / segment
             if candidate_dir.is_dir() and any(candidate_dir.glob("test_*.py")):
-                base = candidate_dir.resolve()
                 rels = sorted(
-                    p.relative_to(testbed.resolve()).as_posix()
-                    for p in candidate_dir.rglob("test_*.py")
+                    fp.relative_to(testbed.resolve()).as_posix()
+                    for fp in candidate_dir.rglob("test_*.py")
                 )
                 return "L4", rels[:_MAX_TARGETS]
     return "none", []

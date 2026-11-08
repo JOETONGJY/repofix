@@ -435,3 +435,78 @@ class TestPreflightMultiCommandShortCircuit:
         assert report.baseline["exit_code"] == 1  # 保留失败码，未被覆盖
         # 短路：4 个 probe + 1 条命令，第二条未执行
         assert len(cli.exec_calls) == 5
+
+
+class TestCommandPolicyTiers:
+    """工具效率 v1：命令权限档位（strict / coding_benchmark）。"""
+
+    def test_strict_unchanged(self):
+        assert check_command_allowed(["grep", "-n", "x", "a.py"], "strict") is False
+        assert check_command_allowed(["pytest", "-q"], "strict") is True
+
+    def test_coding_benchmark_allows_readonly_tier(self):
+        assert check_command_allowed(["grep", "-n", "pattern", "src/a.py"], "coding_benchmark") is True
+        assert check_command_allowed(["rg", "--fixed-strings", "pat", "."], "coding_benchmark") is True
+        assert check_command_allowed(["ls", "-la", "src"], "coding_benchmark") is True
+
+    def test_coding_benchmark_still_blocks_dangerous(self):
+        assert check_command_allowed(["pip", "install", "x"], "coding_benchmark") is False
+        assert check_command_allowed(["bash", "-c", "rm -rf /"], "coding_benchmark") is False
+        # 只读层的危险参数/路径被参数级校验拒绝
+        assert check_command_allowed(["rg", "--pre", "cat", "x"], "coding_benchmark") is False
+        assert check_command_allowed(["grep", "-f", "patterns.txt", "src"], "coding_benchmark") is False
+        assert check_command_allowed(["grep", "-n", "x", "/etc/passwd"], "coding_benchmark") is False
+        assert check_command_allowed(["ls", "../../etc"], "coding_benchmark") is False
+
+    def test_is_readonly_intent_command(self):
+        from repofix.workspace.docker_workspace import is_readonly_intent_command
+
+        assert is_readonly_intent_command(["grep", "-n", "x"]) is True
+        assert is_readonly_intent_command(["pip", "install", "x"]) is False
+        assert is_readonly_intent_command([]) is False
+
+
+class TestSearchCodeMultiMatch:
+    """工具效率 v1：search_code 每文件多匹配 + 上下文行。"""
+
+    def test_build_rg_argv_max_per_file_and_context(self):
+        from repofix.workspace.docker_workspace import build_rg_argv
+
+        argv = build_rg_argv("pat", "src", False, None, 100, max_per_file=7, context=2)
+        assert "--max-count" in argv and argv[argv.index("--max-count") + 1] == "7"
+        assert "-A" in argv and argv[argv.index("-A") + 1] == "2"
+
+    def test_build_rg_argv_defaults(self):
+        from repofix.workspace.docker_workspace import build_rg_argv
+
+        argv = build_rg_argv("pat", "src", False, None, 100)
+        assert "--max-count" in argv and argv[argv.index("--max-count") + 1] == "5"
+        assert "-A" not in argv
+
+    def test_parse_rg_output_context_lines(self):
+        from repofix.workspace.docker_workspace import parse_rg_output
+
+        out = "a.py:10:match one\na.py-11-context line\na.py:12:match two\n"
+        matches, truncated = parse_rg_output(out, 100)
+        assert truncated is False
+        assert matches[0] == {"path": "a.py", "line": 10, "match_text": "match one"}
+        assert matches[1]["line"] == 11 and "context" in matches[1]["match_text"]
+
+
+class TestListFilesPrune:
+    """工具效率 v1：list_files 剪枝构建产物目录。"""
+
+    def test_pruned_dirs_skipped(self, tmp_path):
+        from repofix.workspace.docker_workspace import LIST_FILES_PRUNE_DIRS, iter_workspace_files
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.py").write_text("x")
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "junk.pyc").write_text("x")
+        (tmp_path / "node_modules").mkdir()
+        (tmp_path / "node_modules" / "dep.js").write_text("x")
+        files, truncated = iter_workspace_files(tmp_path, 3, 100)
+        rels = [p.relative_to(tmp_path).as_posix() for p in files]
+        assert rels == ["src/a.py"]
+        assert truncated is False
+        assert "__pycache__" in LIST_FILES_PRUNE_DIRS

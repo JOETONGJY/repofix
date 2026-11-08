@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 
 from repofix.contracts import RunConfig, TaskSpec
-from repofix.evaluation.swebench.judge import run_judge
+from repofix.evaluation.swebench.judge import extract_eval_commands, run_judge
 from repofix.evaluation.swebench.workspace import (
     build_agent_image,
     extract_testbed,
@@ -27,11 +27,10 @@ from repofix.evaluation.swebench.workspace import (
     run_install_commands,
     start_eval_container,
 )
-from repofix.evaluation.swebench.judge import extract_eval_commands
 from repofix.gateway.adapter import DeepSeekAdapter
 from repofix.runtime.loop_guard import BudgetTracker, SystemClock
-from repofix.runtime.runner import AgentRunner
 from repofix.runtime.review_runner import ReviewRunner
+from repofix.runtime.runner import AgentRunner
 from repofix.state import SQLiteEventStore
 from repofix.tools.dispatcher import ToolDispatcher
 from repofix.tools.registry import ToolRegistry, register_default_tools
@@ -136,7 +135,7 @@ def build_task_stack(
     runner = AgentRunner(
         run_id=run_id, task=task_spec, config=config,
         model_client=adapter, registry=registry,
-        dispatcher=ToolDispatcher(registry, workspace),
+        dispatcher=ToolDispatcher(registry, workspace, command_policy=config.command_policy),
         store=store, verifier=verifier, clock=SystemClock(),
         patch_hash_provider=lambda: workspace.get_changes()["patch_hash"],
         preflight_summary=preflight_summary,
@@ -298,7 +297,8 @@ def summarize(records: list[dict]) -> dict:
         if r["resolved"]:
             return "resolved"
         if not r["judge"]["patch_applied"]:
-            if r["agent"].get("token_usage", {}).get("total", 0) and "no patch produced" in r["judge"].get("reason", ""):
+            has_spend = r["agent"].get("token_usage", {}).get("total", 0)
+            if has_spend and "no patch produced" in r["judge"].get("reason", ""):
                 return "no_patch_produced"
             return "patch_apply_failed"
         if r["judge"]["f2p_failures"] and r["judge"]["p2p_regressions"]:

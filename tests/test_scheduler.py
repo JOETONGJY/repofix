@@ -369,3 +369,43 @@ class TestByteTruncation:
         call = make_tool_call("c1", "read_file", path="big.py")
         result = dispatcher.execute(call)
         assert result.truncated is False  # Fake 短输出不受影响
+
+
+class TestReadonlyCommandNoCascade:
+    """工具效率 v1：只读意图命令的校验期拒绝不级联（无副作用）；写入类维持级联。"""
+
+    def _make(self, registry, dispatcher=None):
+        store = SQLiteEventStore(":memory:")
+        scheduler = ToolBatchScheduler(
+            run_id="r", dispatcher=dispatcher or ToolDispatcher(registry, FakeToolExecutor()),
+            registry=registry, store=store,
+            budget=BudgetTracker(RunConfig(model_id="m"), FakeClock()),
+        )
+        return scheduler, store
+
+    def test_readonly_command_denial_does_not_abort_batch(self, registry):
+        from repofix.tools.dispatcher import ToolDispatcher
+
+        dispatcher = ToolDispatcher(registry, FakeToolExecutor(), command_policy="strict")
+        scheduler, _ = self._make(registry, dispatcher)
+        calls = [
+            make_tool_call("c1", "run_command", argv=["grep", "-n", "x", "a.py"]),
+            make_tool_call("c2", "read_file", path="a.py"),
+        ]
+        outcome = scheduler.execute_batch(calls, AgentActor.MAIN, step=1, decision_id="d", ts=1.0)
+        assert outcome.results[0].error_code is ToolErrorCode.PERMISSION_DENIED
+        assert outcome.results[1].status is ExecutionStatus.SUCCEEDED  # 不级联
+
+    def test_non_readonly_command_denial_still_cascades(self, registry):
+        from repofix.tools.dispatcher import ToolDispatcher
+
+        dispatcher = ToolDispatcher(registry, FakeToolExecutor(), command_policy="strict")
+        scheduler, _ = self._make(registry, dispatcher)
+        calls = [
+            make_tool_call("c1", "run_command", argv=["pip", "install", "x"]),
+            make_tool_call("c2", "read_file", path="a.py"),
+        ]
+        outcome = scheduler.execute_batch(calls, AgentActor.MAIN, step=1, decision_id="d", ts=1.0)
+        assert outcome.results[0].error_code is ToolErrorCode.PERMISSION_DENIED
+        assert outcome.results[1].status is ExecutionStatus.SKIPPED
+        assert outcome.results[1].skipped_reason == "batch_aborted_after_write_failure"

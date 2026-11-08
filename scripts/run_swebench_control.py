@@ -10,12 +10,11 @@
 """
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
 from repofix.contracts import RunConfig
-from repofix.evaluation.swebench import dataset, runner
+from repofix.evaluation.swebench import dataset
 from repofix.evaluation.swebench.control import run_control_task
 from repofix.evaluation.swebench.workspace import download_rg
 from repofix.workspace.docker_cli import DockerCli
