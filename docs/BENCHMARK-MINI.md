@@ -1,6 +1,6 @@
 # SWE-bench Lite Mini-Eval（RepoFix）
 
-- 生成时间：2026-11-07 12:30 UTC
+- 生成时间：2026-11-08 03:54 UTC
 - 数据集：SWE-bench/SWE-bench_Lite @ `b0dde1093fe417d83b7184254edf8199c1f0dff5`（test split，hf-mirror 获取）
 - 选题规则：selection_rules_v1（冻结于任何模型调用之前）
 - 模型：deepseek-flash（Non-thinking，与 Experiment G 一致）
@@ -80,14 +80,16 @@ test split 300 题 → 规则保留 95 题（R1 非 pytest 协议 191、R2 多�
 
 | 维度 | Agent（工具+循环+验证，600k 档） | 无工具对照（600k） |
 | --- | --- | --- |
-| Resolved | 2/8 | 1/8 |
+| Resolved | 2/8 | 0/8 |
 | 平均 tokens/题 | 425,794 | 253,707 |
 | patch 可应用 | 5/8 任务产出可应用 patch | 4/293 轮（1.4%） |
 | Runtime 完整跑通 | 1/8（sklearn） | 0/8 |
 
-逐题差异：Agent 独有解决 ['pytest-dev__pytest-11143', 'scikit-learn__scikit-learn-10297']；对照独有解决 ['pydata__xarray-3364']；共同解决 无。
+逐题差异：Agent 独有解决 ['pytest-dev__pytest-11143', 'scikit-learn__scikit-learn-10297']；对照独有解决 无；共同解决 无。
 
-**解读**：Agent 的净增益 = +1 解决与接近数量级的 patch 可应用率。对照唯一解决的 xarray 属于『修复局部于 issue 可定位文件』的情形——静态上下文即可完成；需要检索/验证反馈的任务上工具循环是决定性的。该对照为单次运行、n=8，不做统计推断。
+**对照 0/8 的一个重要注记**：对照的 xarray-3364 最初被静默成功规则误判为 RESOLVED——其 12 行 patch 破坏了测试收集（imports 失败），两个 F2P 测试从未运行却被官方 v1 的『缺席 = 静默通过』语义记为通过。该假阳性由逐测试状态复核发现，判定器已收紧（收集中断时缺席测试不再记为通过），并作为官方 v1 语义已知缺陷的实证记录在案。
+
+**解读**：Agent 2/8 vs 对照 0/8——patch 可应用率相差约两个数量级。需要检索/定位的任务（sklearn、pytest）只有工具循环能解；修复局部化的任务也未能被盲写 diff 解决（对照 293 轮仅 4 次应用成功）。该对照为单次运行、n=8，不做统计推断。
 
 ## 环境与可追溯性
 

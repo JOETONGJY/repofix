@@ -230,14 +230,17 @@
     },
     "agent_seconds": 217.2,
     "judge": {
-      "outcome": "RESOLVED",
-      "reason": "all FAIL_TO_PASS and PASS_TO_PASS tests passed on independently applied patch (official semantics: explicit failure set + silent success)",
+      "outcome": "FAILED",
+      "reason": "test collection interrupted with the applied patch (12-line signature-only change broke test imports); F2P never ran — silent-success false positive caught by post-hoc verification",
       "patch_applied": true,
-      "f2p_failures": [],
+      "f2p_failures": {
+        "xarray/tests/test_combine.py::TestAutoCombineOldAPI::test_auto_combine_with_new_variables": "SILENT_PASS",
+        "xarray/tests/test_concat.py::TestConcatDataset::test_concat_merge_variables_present_in_some_datasets": "SILENT_PASS"
+      },
       "p2p_regressions": [],
       "statuses_count": 2
     },
-    "resolved": true,
+    "resolved": false,
     "artifacts_dir": "E:\\CodingAgent\\repofix-data\\swebench\\runs\\pydata__xarray-3364"
   }
 ]

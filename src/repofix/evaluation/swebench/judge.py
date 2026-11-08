@@ -231,7 +231,18 @@ def run_judge(
             test_rc = test_rc or outcome.returncode
         record.test_rc = test_rc
 
-        statuses = parse_short_summary("\n".join(combined))
+        combined_text = chr(10).join(combined)
+        # 收集中断检测（假阳性守卫，对照组实验后置发现）：官方 v1 的 silent-success
+        # 语义在 patch 破坏测试收集时会把"从未运行的测试"记成通过——此时任何
+        # 未显式 PASSED 的测试一律不得记为通过
+        collection_interrupted = (
+            "errors during collection" in combined_text
+            or "Interrupted:" in combined_text
+            or bool([l for l in combined_text.splitlines()
+                     if l.startswith("ERROR ") and "::" not in l])
+        )
+
+        statuses = parse_short_summary(combined_text)
         record.statuses_count = len(statuses)
         # 官方对比语义（SWE-bench v1 get_eval_report，逐字复刻）：
         # - 输出中缺失的测试 = "silent success"（不带 -rA 的命令不打印通过测试）；
@@ -241,9 +252,8 @@ def run_judge(
         if not statuses and test_rc != 0:
             # 区分两种"无状态"：收集/导入错误（patch 产出坏代码 → FAILED，如实判定）
             # vs 执行层完全无输出（基础设施故障 → INCONCLUSIVE）
-            combined_text = chr(10).join(combined)
-            collection_markers = ("ImportError while loading conftest", "Traceback (most recent call last)")
-            if any(marker in combined_text for marker in collection_markers):
+            if collection_interrupted or "ImportError while loading conftest" in combined_text \
+                    or "Traceback (most recent call last)" in combined_text:
                 record.outcome = "FAILED"
                 record.f2p_failures = list(fail_to_pass)  # 收集失败时任何测试都未证明通过
                 record.reason = (
@@ -254,7 +264,11 @@ def run_judge(
             record.reason = (
                 "no test statuses parsed and test command failed; parser or env mismatch")
             return record
-        official_failed = lambda tid: statuses.get(tid) in ("FAILED", "ERROR")  # noqa: E731
+        # 收集中断时收紧 silent-success：缺席不再视为通过
+        official_failed = lambda tid: (
+            statuses.get(tid) in ("FAILED", "ERROR")
+            or (collection_interrupted and statuses.get(tid) is None)
+        )  # noqa: E731
         record.f2p_results = {tid: statuses.get(tid, "SILENT_PASS") for tid in fail_to_pass}
         record.f2p_failures = [tid for tid in fail_to_pass if official_failed(tid)]
         record.p2p_regressions = [tid for tid in pass_to_pass if official_failed(tid)]

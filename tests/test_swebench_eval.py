@@ -299,3 +299,18 @@ def test_selection_funnel_counts_rejections():
     assert result["rejected_by_rule"]["R1_repo_parser"] == 1
     assert result["rejected_by_rule"]["R2_single_file"] == 1
     assert result["rejected_by_rule"]["R5_problem_length"] == 1
+
+
+def test_collection_interrupt_blocks_silent_success():
+    """收集中断时，缺席测试不得被 silent-success 记为通过（假阳性守卫）。"""
+    output = (
+        "ImportError while loading conftest '/testbed/lib/matplotlib/tests/conftest.py'.\n"
+        "=========================== short test summary info ============================\n"
+        "ERROR lib/matplotlib/tests/test_matplotlib.py\n"
+        "!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!\n"
+    )
+    statuses = parse_short_summary(output)
+    assert statuses == {"lib/matplotlib/tests/test_matplotlib.py": "ERROR"}
+    # F2P 缺席 + 收集中断 → 必须判失败，不得静默通过
+    collection_interrupted = "errors during collection" in output
+    assert collection_interrupted
