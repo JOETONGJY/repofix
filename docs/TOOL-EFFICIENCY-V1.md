@@ -3,7 +3,7 @@
 - 日期：2026-11-08
 - 范围：GPT 评审定义的 "SWE-bench Scalability & Tool Efficiency Optimization v1"——P0-1/2/3 + P1-1 全部落地，P1-2 为设计草图，P1-3 离线分析完成
 - 原则：不改动 Main + Reviewer 架构、不开放任意 Shell、不引入 RAG/LLM Summary、不给模型任何隐藏信息；全部改动保持沙箱边界、审计与预算语义
-- 测试：**315 passed, 2 skipped**（新增 14 项）；ruff 全绿
+- 测试：**326 passed, 3 skipped**（两轮合计新增 25 项）；ruff 全绿；端到端链路冒烟 20 项全过（零 Token）
 
 ## 一、实际修改
 
@@ -47,19 +47,40 @@
 
 ## 二、离线效率分析结果（600k 档真实 Trace，诚实数据）
 
+> **数据勘误（第二轮 Review 后）**：初版分析用的是陈旧 Trace 副本（run_id 改为
+> 每次尝试唯一后，导出路径未同步，各档 trajectory.jsonl 都是 200k 档的旧内容；
+> 该导出 bug 已修复，24 条历史 Trace 已从权威 SQLite 按 token 量匹配恢复）。
+> 下表为恢复后的正确数据。
+
 | 运行 | 轮数 | prompt 总量 | N=6 预计节省 | N=12 预计节省 |
 | --- | --- | --- | --- | --- |
-| sklearn-10297（completed） | 12 | 61,823 | 0.0% | 0.0% |
-| matplotlib-18869 | 18 | 195,206 | 8.6% | 0.0% |
-| sphinx-10325 | 12 | 60,493 | 0.0% | 0.0% |
-| seaborn-2848 | 14 | 66,131 | 0.1% | 0.0% |
+| sklearn-10297（completed） | 21 | 232,818 | 7.9% | 0.0% |
+| matplotlib-18869 | 46 | 587,877 | 41.9% | 19.2% |
+| sphinx-10325 | 41 | 606,974 | 44.9% | 24.0% |
+| seaborn-2848 | 38 | 596,060 | 51.4% | 12.6% |
+| pylint-5859 | 43 | 506,082 | 28.7% | 10.7% |
 
-**两个诚实的结论**：
+**三个诚实的结论**：
 
-1. **当前 12-18 轮的短运行上，近期窗口收益有限（0-9%）**——窗口未及展开运行就结束了。收益随运行长度增长（1M 档 46-59 轮的运行会显著受益，但该批 Trace 已被对照组覆盖，列为下一步 A/B 的实测项）。
-2. **成本结构的关键发现**：matplotlib 第 6-10 轮每轮仅注入 24-59 字符工具输出，prompt 却每轮增长 ~900 token——**大头是模型自身历史输出（每轮 ~1k completion token 的失败 diff 原文等）被逐轮重发计费**。这把"98% prompt"的构成从猜测变成了测量：context 摘要必须覆盖 assistant 消息体（已实现），仅压工具输出省不出成本。
+1. **真实 600k 档（21-46 轮长运行）上，近期窗口收益显著**：N=6 省 8-51%、N=12 省 0-24%。N=6 优于 N=12——更激进的窗口在长运行上收益更大，A/B 时建议以 N=6 为主配置、N=12 为对照。
+2. **成本结构的关键发现（测量而非猜测）**：matplotlib 第 6-10 轮每轮仅注入 24-59 字符工具输出，prompt 却每轮增长 ~900 token——**大头是模型自身历史输出（每轮 ~1k completion token 的失败 diff 原文等）被逐轮重发计费**。context 摘要必须覆盖 assistant 消息体（已实现），仅压工具输出省不出成本。
+3. **数据卫生教训**：Trace 副本与权威 SQLite 的不一致差点让优化建立在错误结论上（初版 0-9% 全部来自陈旧数据）。"链路上验证启用"必须包含"产物与存储一致"。
 
 工具摩擦数据（P1-3 前置统计）：21 次 `permission_denied`（去重后 5/8 任务命中，`grep -n`/`ls` 为主）、2 次只读拒绝引发的批次级联——P0-1/P1-1 直接对症。
+
+## 二b、第二轮 Review 修订（5650030 后）
+
+| 项 | 修订 |
+| --- | --- |
+| **P0-1** | 评测入口 `build_task_stack` 的 `DockerWorkspace` 现在接收 `command_policy=config.command_policy`；新增回归测试锁定"两层同策略"（漏传会让 Dispatcher 放行的命令在执行层被 strict 打回） |
+| **P0-2** | 只读命令校验从黑名单改为**允许选项白名单**：`--pre=COMMAND` 等值绕过、未知长选项、组合短选项中的未知字母全部拒绝；数值选项（`-A2`/`--max-count=3`）要求正整数取值；`--` 之后的操作数照常校验路径 |
+| **P1a** | `list_files` 遍历不再跟随目录 symlink（`is_dir()` 会跟随）：越界 symlink 静默跳过，文件型 symlink 仅当解析后仍位于工作区内时列出 |
+| **P1b** | CLI 暴露 `--context-recent-full-turns`；评测逐题记录（PREFLIGHT_COMPLETED 事件 + preflight_summary）写入实际生效的 `command_policy` 与窗口值——取自 RunConfig 本身而非脚本参数 |
+| **P1c** | README 对照组结果同步为 0/8（含假阳性注记）、v0/v1 版本口径说明 |
+| **P2** | `parse_rg_output` 用正则严格区分匹配行（`path:N:`）与上下文行（`path-N-`）：内容含冒号不再误判，上下文行不占 limit 名额，`--` 分组忽略；匹配/上下文行在渲染中用 `:`/`-` 前缀区分 |
+| **Trace 导出 bug（链路校验发现）** | `run_task` 导出 trajectory 用的是固定 `run_{instance_id}`，而 run_id 已改为每次尝试唯一——导出的 Trace 实际是陈旧内容。已改为导出本次尝试的 run_id，并从权威 SQLite 恢复了 24 条历史 Trace |
+
+**端到端链路冒烟（`scripts/smoke_tool_efficiency_v1.py`，零模型 Token，真实容器）**：走通 eval runner 装配 → Dispatcher → DockerWorkspace → 官方派生镜像容器内执行。20 项检查全部通过——coding_benchmark 下 grep/rg/ls 两层放行且容器内真实执行成功、strict 下同样命令两层皆拒、危险参数（`--pre=`/`-f`/绝对路径/`..`）两层皆拒、绕过 Workspace 直接调用执行层同样拒绝（纵深防御）、pytest 命令不受影响、两层策略一致（P0-1 回归防护）。
 
 ## 三、兼容性与安全
 
@@ -73,7 +94,7 @@
 
 ## 五、A/B 提案（待批准后才调用模型）
 
-- **A 组（v1 配置）**：现有 8 题冻结集，`--command-policy coding_benchmark --context-recent-full-turns 12`，预算与 600k 档对齐（600k/题、60 调用），单次运行。
+- **A 组（v1 配置）**：现有 8 题冻结集，`--command-policy coding_benchmark --context-recent-full-turns 6`，预算与 600k 档对齐（600k/题、60 调用），单次运行。N=6 依据勘误后的分析（长运行上 N=6 节省 8-51%，优于 N=12 的 0-24%）。
 - **对照基线**：v0 的 600k 档记录（2/8、425k tok/题）不重跑、不覆盖。
 - **观测指标**：Resolved@1、命令拒绝次数（预期 →~0）、批次级联次数（预期 →~0）、平均 tokens/题、每轮平均 prompt、patch 应用率、失败类型分布。
 - **预算**：≤5M token（与 600k 档实际消耗上限对齐）。

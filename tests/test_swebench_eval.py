@@ -314,3 +314,44 @@ def test_collection_interrupt_blocks_silent_success():
     # F2P 缺席 + 收集中断 → 必须判失败，不得静默通过
     collection_interrupted = "errors during collection" in output
     assert collection_interrupted
+
+
+def test_build_task_stack_passes_policy_to_both_layers(tmp_path, monkeypatch):
+    """评审 P0-1 回归防护：评测入口必须把 command_policy 同时传给 Dispatcher 与
+    DockerWorkspace——Workspace 默认 strict，漏传会让 Dispatcher 放行的命令在
+    执行层被打回（优化"存在于代码"却"未在链路启用"）。"""
+    import repofix.evaluation.swebench.runner as eval_runner
+    from repofix.contracts import RunConfig
+
+    class FakeCli:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, *a, **k):
+            class R:
+                returncode, stdout, stderr = 0, "", ""
+            return R()
+
+        def remove_container(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(eval_runner, "DockerCli", FakeCli)
+    monkeypatch.setattr(eval_runner, "build_agent_image", lambda *a, **k: "img")
+    monkeypatch.setattr(eval_runner, "start_eval_container", lambda *a, **k: None)
+    monkeypatch.setattr(eval_runner, "probe_python_env",
+                        lambda *a, **k: {"rg_available": True})
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-no-calls")
+    (tmp_path / "tb").mkdir()
+
+    for policy in ("strict", "coding_benchmark"):
+        config = RunConfig(model_id="m", command_policy=policy, review_enabled=False)
+        runner, store, workspace, cli, container, _img = eval_runner.build_task_stack(
+            instance_id="x", run_id=f"r-{policy}", image="img", base_commit="abc",
+            problem_statement="p", visible_plan_argv=[], testbed=tmp_path / "tb",
+            run_dir=tmp_path / f"run-{policy}", config=config, rg_path=tmp_path / "rg",
+            preflight_summary={}, installs=None,
+        )
+        dispatcher = runner._scheduler._dispatcher  # noqa: SLF001
+        assert workspace.command_policy == policy
+        assert dispatcher.command_policy == policy
+        store.close()

@@ -172,6 +172,7 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         preflight_summary={
             "steps": "ok",
             "command_policy": config.command_policy,
+            "context_recent_full_turns": config.context_recent_full_turns,
             "test_plan": report.test_plan,
             "test_plan_source": report.test_plan_source,
             "test_plan_evidence": report.test_plan_evidence,
@@ -247,6 +248,9 @@ def run(
     command_policy: str = typer.Option("strict", "--command-policy",
                                        help="命令权限档位：strict（v0 白名单）/ coding_benchmark"
                                             "（追加受控只读命令 grep/rg/ls）"),
+    context_recent_full_turns: int = typer.Option(0, "--context-recent-full-turns", min=0,
+                                                  help="Context 近期完整窗口：最近 N 轮保留完整"
+                                                       "工具输出，更早轮次确定性摘要；0 = 关闭（v0）"),
 ) -> None:
     """一次性任务执行：输入任务 → 自主修复 → 输出 Patch / Trace / 报告。"""
     try:
@@ -267,6 +271,7 @@ def run(
         review_enabled=review,  # --review 启用双 Agent（默认 False = 单 Agent Baseline，可复现）
         output_dir=str(output_dir),
         command_policy=command_policy,
+        context_recent_full_turns=context_recent_full_turns,
         # Context Budget 生产启用（评审 P0-1）：已验证模型的窗口来自 profile；未知模型不虚构容量
         context_window_tokens=resolve_context_window(model),
     )

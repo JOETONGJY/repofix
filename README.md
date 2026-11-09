@@ -202,10 +202,12 @@ CLI 接收任务 + 仓库 + 运行配置
 | Resolved@1（600k token/题 档） | **2/8（25%）**，零 P2P 回归 |
 | Patch Apply Rate | 5/8 |
 | 预算标度（60k/200k/600k/1M 每题） | 0 → 1 → 2 → 2（600k 后收益饱和，瓶颈转移到模型 diff 生成能力） |
-| 无工具 API 对照（同信息量、同预算） | 1/8 —— Agent 净增益 +1 解决、patch 可用率高一个数量级 |
-| 成本结构 | prompt 累积占总消耗 ~98%（上下文效率即 Agent 效率） |
+| 无工具 API 对照（同信息量、同预算） | **0/8** —— Agent 净增益 +2 解决；对照的唯一"解决"经复核为假阳性（patch 破坏测试收集，判定器已修复 silent-success 盲区） |
+| 成本结构 | prompt 累积占总消耗 ~98%，其中大头是**模型自身历史输出逐轮重发**（上下文效率即 Agent 效率） |
 
-> 范围声明：本结果为 **SWE-bench Lite constrained subset**（pytest 协议 + 单文件 + 环境可运行筛选后的固定子集，n=8 单次运行），不代表 SWE-bench Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，不改动核心 Harness（仅 `DockerWorkspace` 增加挂载点参数）。
+> 范围声明：本结果为 **SWE-bench Lite constrained subset**（pytest 协议 + 单文件 + 环境可运行筛选后的固定子集，n=8 单次运行），不代表 SWE-bench Lite 全量成绩，不与公开排行榜对比。上表为 **RepoFix v0**（strict 命令白名单）结果。评测适配层位于 `evaluation/swebench/`。
+
+**工具效率 v1（未评测）**：`--command-policy coding_benchmark` 追加受控只读命令 `grep / rg / ls`（允许选项白名单 + 工作区路径约束，不开放任意 Shell）；`--context-recent-full-turns N` 启用旧轮次确定性摘要；`search_code` 支持每文件多匹配与上下文行。默认值保持 v0 行为以保证旧实验可复现。设计与离线分析见 [docs/TOOL-EFFICIENCY-V1.md](docs/TOOL-EFFICIENCY-V1.md)。
 
 ---
 

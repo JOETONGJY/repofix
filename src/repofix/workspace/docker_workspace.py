@@ -43,12 +43,63 @@ ALLOWED_COMMANDS = STRICT_COMMANDS  # 向后兼容别名（specs/03 原名）
 # （5/8 任务命中），造成调用浪费与批次级联。只读、无网沙箱内执行，风险可控。
 READONLY_TIER_PROGRAMS = ("grep", "rg", "ls")
 
-# 只读层危险参数块名单（能执行外部程序或读取工作区外文件的入口）
-_READONLY_BLOCKED_FLAGS = {
-    "grep": {"-f", "--file"},
-    "rg": {"-f", "--file", "--pre", "--pre-glob", "--hostname-bin", "--pager"},
-    "ls": set(),
+# 只读层允许的选项白名单（P0-2 修订：黑名单枚举危险项不可靠——rg 支持
+# --pre=COMMAND 等值形式可绕过精确匹配；白名单枚举安全面，未列入一律拒绝）。
+# 全部为只读语义选项；短选项含组合形式（-in、-rn 等）。
+_READONLY_ALLOWED_FLAGS = {
+    "grep": {
+        "-n", "-i", "-v", "-c", "-H", "-h", "-o", "-q", "-w", "-x", "-r", "-R",
+        "-L", "-E", "-F", "-G", "-P", "-a", "-U", "-s", "-l", "-m", "-A", "-B", "-C",
+        "--fixed-strings", "--regexp", "--ignore-case", "--invert-match",
+        "--count", "--with-filename", "--no-filename", "--only-matching",
+        "--word-regexp", "--line-regexp", "--recursive", "--dereference-recursive",
+        "--basic-regexp", "--extended-regexp", "--perl-regexp", "--text",
+        "--no-messages", "--files-with-matches", "--files-without-match",
+        "--color", "--include", "--exclude", "--max-count", "--after-context",
+        "--before-context", "--context",
+    },
+    "rg": {
+        "-n", "-i", "-v", "-c", "-o", "-q", "-w", "-x", "-s", "-l", "-A", "-B", "-C",
+        "-F", "-E", "-G", "-P", "-H", "-u", "-a", "-t", "-T", "-g", "-M", "-m",
+        "--fixed-strings", "--ignore-case", "--case-sensitive", "--invert-match",
+        "--count", "--count-matches", "--line-number", "--no-line-number",
+        "--with-filename", "--no-filename", "--only-matching", "--word-regexp",
+        "--line-regexp", "--hidden", "--no-messages", "--files-with-matches",
+        "--files-without-match", "--color", "--colors", "--max-columns",
+        "--max-columns-preview", "--max-count", "--max-filesize", "--max-depth",
+        "--glob", "--iglob", "--glob-case-insensitive", "--type", "--type-not",
+        "--type-list", "--after-context", "--before-context", "--context",
+        "--column", "--no-unicode", "--smart-case", "--sort", "--sortr",
+        "--follow", "--no-config", "--no-ignore", "--no-ignore-global",
+        "--no-ignore-parent", "--no-ignore-vcs", "--no-require-git",
+        "--no-unicode", "--text", "--threads", "--path-separator", "--regexp",
+        "--include-zero", "--replace",
+    },
+    "ls": {
+        "-a", "-A", "-l", "-1", "-C", "-F", "-R", "-d", "-h", "-i", "-n", "-p",
+        "-q", "-r", "-s", "-t", "-u", "-U", "-x", "-S", "-X", "-G", "-Q",
+        "--all", "--almost-all", "--long", "--format", "--human-readable",
+        "--inode", "--numeric-uid-gid", "--indicator-style", "--reverse",
+        "--recursive", "--sort", "--time", "--width", "--color", "--directory",
+        "--escape", "--literal", "--indicator-style", "--group-directories-first",
+    },
 }
+
+# 带独立取值的选项（--opt VALUE 形式），取值按操作数规则校验路径边界；
+# 数值型选项（_NUMERIC_VALUE_FLAGS）额外要求取值为正整数（防 -A2x 类垃圾取值）
+_READONLY_VALUE_FLAGS = {
+    "grep": {"--color", "--include", "--exclude", "--regexp", "-m", "--max-count",
+             "-A", "-B", "-C", "--after-context", "--before-context", "--context"},
+    "rg": {"--color", "--colors", "--max-columns", "--max-count", "--max-filesize",
+           "--max-depth", "--glob", "--iglob", "--type", "--type-not", "-A", "-B", "-C",
+           "-m", "-M", "--threads", "--path-separator", "--context", "--after-context",
+           "--before-context", "--replace", "--regexp", "-t", "-T", "-g", "-E"},
+    "ls": {"--format", "--indicator-style", "--sort", "--time", "--width", "--color"},
+}
+
+_NUMERIC_VALUE_FLAGS = {"-m", "--max-count", "-A", "-B", "-C",
+                        "--after-context", "--before-context", "--context",
+                        "--max-columns", "--max-depth", "-M", "--threads"}
 
 
 def is_readonly_intent_command(argv: list[str]) -> bool:
@@ -57,29 +108,106 @@ def is_readonly_intent_command(argv: list[str]) -> bool:
 
 
 def validate_readonly_command(argv: list[str]) -> str | None:
-    """只读层参数级校验。返回 None = 通过；否则返回拒绝原因。
+    """只读层参数级校验（P0-2：允许选项白名单制）。返回 None = 通过；否则拒绝原因。
 
-    约束（GPT 评审 P0-1）：限制读取路径在工作区内（拒绝绝对路径/..）、禁止
-    能执行外部程序的入口（rg --pre、grep -f 等）、argv 数组无 Shell。
+    规则：
+    - 选项必须在 _READONLY_ALLOWED_FLAGS 白名单内（含 --opt=value 形式的拆分）；
+      未列入即拒绝——不枚举危险项（rg --pre=COMMAND 类等值绕过被白名单直接挡住）；
+    - 组合短选项逐字符校验（-lf 中每个字母都必须允许）；
+    - 带值选项的取值、裸操作数按路径规则校验（工作区相对、无 ..、无 ~）；
+    - `--` 之后的操作数全部按路径规则校验；
+    - 不引入 Shell、不支持读取工作区外文件。
     """
     program = argv[0] if argv else ""
-    blocked = _READONLY_BLOCKED_FLAGS.get(program, set())
-    for token in argv[1:]:
-        if token.startswith("-"):
-            # 选项：块名单 + 组合短选项中出现被禁字母（如 grep -lf）
-            if token in blocked:
-                return f"option not allowed for {program}: {token}"
-            if token.startswith("--"):
-                continue
-            if program in ("grep", "rg") and any(ch in token.lstrip("-") for ch in "fdzP"):
-                # -f 读模式文件 / -d 目录动作 / -z 压缩输入 / -P 可能引入外部引擎语义
-                return f"option not allowed for {program}: {token}"
+    allowed = _READONLY_ALLOWED_FLAGS.get(program, set())
+    value_flags = _READONLY_VALUE_FLAGS.get(program, set())
+    operands_allowed = program == "rg" or program in ("grep", "ls")  # 全部允许操作数
+    after_dd = False
+    i = 1
+    while i < len(argv):
+        token = argv[i]
+
+        def _check_operand(value: str) -> str | None:
+            if value.startswith("-") and value != "-":
+                return f"option-like operand not allowed: {value}"
+            if value.startswith("/") or value.startswith("~"):
+                return f"absolute paths are not allowed: {value}"
+            if ".." in Path(value).parts:
+                return f"path traversal is not allowed: {value}"
+            return None
+
+        def _check_value(flag: str, value: str) -> str | None:
+            if flag in _NUMERIC_VALUE_FLAGS and not value.isdigit():
+                return f"option {flag} requires a non-negative integer, got: {value}"
+            return _check_operand(value)
+
+        if after_dd:
+            err = _check_operand(token)
+            if err:
+                return err
+            i += 1
             continue
-        # 操作数（文件/目录/模式）：必须相对且不逃逸
-        if token.startswith("/") or token.startswith("~"):
-            return f"absolute paths are not allowed: {token}"
-        if ".." in Path(token).parts:
-            return f"path traversal is not allowed: {token}"
+
+        if token == "--":
+            after_dd = True
+            i += 1
+            continue
+
+        if token.startswith("--"):
+            if "=" in token:
+                flag, value = token.split("=", 1)
+                if flag not in allowed:
+                    return f"option not allowed for {program}: {flag}"
+                err = _check_value(flag, value)
+                if err:
+                    return err
+            elif token in value_flags:
+                if i + 1 >= len(argv):
+                    return f"option {token} requires a value"
+                err = _check_value(token, argv[i + 1])
+                if err:
+                    return err
+                i += 1  # 消费取值
+            elif token not in allowed:
+                return f"option not allowed for {program}: {token}"
+            i += 1
+            continue
+
+        if token.startswith("-") and len(token) > 1:
+            # 组合/带值短选项：-lf 逐字符校验；-A2 / -m5 = 选项字母 + 粘连取值
+            chars = token[1:]
+            value_start = 0
+            for pos, ch in enumerate(chars):
+                if f"-{ch}" not in allowed:
+                    return f"option not allowed for {program}: -{ch}"
+                if f"-{ch}" in value_flags:
+                    # 首个带值短选项：其后的字符（若有）是粘连取值，否则下一个 token
+                    value_start = pos + 1
+                    break
+            if value_start:
+                flag = f"-{chars[value_start - 1]}"
+                inline = chars[value_start:]
+                if inline:
+                    err = _check_value(flag, inline)
+                    if err:
+                        return err
+                else:
+                    if i + 1 >= len(argv):
+                        return f"option -{chars} requires a value"
+                    err = _check_value(flag, argv[i + 1])
+                    if err:
+                        return err
+                    i += 1
+            i += 1
+            continue
+
+        # 裸操作数（搜索模式 / 路径）
+        if not operands_allowed:
+            return f"operands not allowed for {program}"
+        err = _check_operand(token)
+        if err:
+            return err
+        i += 1
     return None
 
 
@@ -136,33 +264,38 @@ def build_rg_argv(pattern: str, path: str, regex: bool, glob: str | None, limit:
 
 
 def parse_rg_output(stdout: str, limit: int) -> tuple[list[dict], bool]:
-    """解析 rg 行输出为 [{path, line, match_text}]；返回 (matches, truncated)。
+    """解析 rg 行输出为 [{path, line, match_text, kind}]；返回 (matches, truncated)。
 
-    两种行格式：匹配行 `path:12:content`、上下文行 `path-12-content`（rg -A
-    输出，分隔符为连字符）。上下文行的路径含连字符时按首个 `-数字-` 切分。
+    两种行格式（评审 P2：用正则严格区分，不靠 split 猜测）：
+    - 匹配行  `path:12:content`  → kind="match"（计入 limit）
+    - 上下文行 `path-12-content` → kind="context"（rg -A 输出；不计入 limit，
+      只附着于其前一条匹配——内容含冒号也不会被误判为匹配行）
+    `--` 分组分隔行忽略。
     """
     matches: list[dict] = []
     truncated = False
+    match_re = re.compile(r"^(.+?):(\d+):(.*)$")
     context_re = re.compile(r"^(.+?)-(\d+)-(.*)$")
+    match_count = 0
     for line in stdout.splitlines():
-        if not line.strip():
+        if not line.strip() or line == "--":
             continue
-        parts = line.split(":", 2)
-        if len(parts) < 3:
-            m = context_re.match(line)
-            if not m:
-                continue
-            if len(matches) >= limit:
+        m = match_re.match(line)
+        c = context_re.match(line)
+        # 两者都能匹配时取"分隔符位置更靠前"者——路径本身不含 ":" 或 "-数字-"
+        # 时二者不会冲突；冲突时 rg 输出的真实分隔符位于路径之后的第一个位置
+        if m and (not c or m.start(2) <= c.start(2)):
+            if match_count >= limit:
                 truncated = True
                 break
-            matches.append({"path": m.group(1), "line": int(m.group(2)), "match_text": m.group(3)})
-            continue
-        if len(matches) >= limit:
-            truncated = True
-            break
-        matches.append(
-            {"path": parts[0], "line": int(parts[1]) if parts[1].isdigit() else None, "match_text": parts[2]}
-        )
+            match_count += 1
+            matches.append({"path": m.group(1), "line": int(m.group(2)),
+                            "match_text": m.group(3), "kind": "match"})
+        elif c:
+            if truncated:
+                break
+            matches.append({"path": c.group(1), "line": int(c.group(2)),
+                            "match_text": c.group(3), "kind": "context"})
     return matches, truncated
 
 
@@ -182,6 +315,7 @@ def iter_workspace_files(root: Path, max_depth: int, limit: int) -> tuple[list[P
     确定性；命中 limit 即停止。
     """
     files: list[Path] = []
+    root_resolved = root.resolve()
 
     def walk(directory: Path, depth: int) -> bool:
         if depth > max_depth or len(files) >= limit:
@@ -196,6 +330,19 @@ def iter_workspace_files(root: Path, max_depth: int, limit: int) -> tuple[list[P
             if entry.name in LIST_FILES_PRUNE_DIRS:
                 continue
             try:
+                # 评审 P1：Path.is_dir() 跟随符号链接——指向工作区外目录的 symlink
+                # 会让遍历越界列出宿主文件名。符号链接一律不递归进入；文件型
+                # symlink 仅当解析后仍位于工作区内时列出，越界者静默跳过。
+                if entry.is_symlink():
+                    try:
+                        target = entry.resolve()
+                    except OSError:
+                        continue
+                    if target != root_resolved and root_resolved not in target.parents:
+                        continue
+                    if target.is_file():
+                        files.append(entry)
+                    continue
                 if entry.is_dir():
                     if walk(entry, depth + 1):
                         return True
@@ -347,7 +494,12 @@ class DockerWorkspace:
         if not matches:
             return ToolResult(call_id="pending", status=ExecutionStatus.SUCCEEDED,
                               content="(no matches)", exit_code=0)
-        lines = [f"{m['path']}:{m['line']}: {m['match_text']}" for m in matches]
+        # 匹配行用 `:`、上下文行用 `-` 前缀标记（与 rg 原生输出一致的视觉区分）
+        lines = [
+            f"{m['path']}:{m['line']}: {m['match_text']}" if m.get("kind", "match") == "match"
+            else f"{m['path']}-{m['line']}- {m['match_text']}"
+            for m in matches
+        ]
         return ToolResult(call_id="pending", status=ExecutionStatus.SUCCEEDED,
                           content="\n".join(lines), truncated=truncated)
 

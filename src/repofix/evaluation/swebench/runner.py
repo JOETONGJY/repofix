@@ -82,7 +82,7 @@ def build_task_stack(
     workspace = DockerWorkspace(
         testbed, run_id, base_commit=base_commit, cli=cli,
         container_name=container, command_timeout_seconds=config.command_timeout_seconds,
-        workspace_mount="/testbed",
+        workspace_mount="/testbed", command_policy=config.command_policy,
     )
     registry = ToolRegistry()
     register_default_tools(registry)
@@ -180,6 +180,13 @@ def run_task(
         "test_plan_source": "issue_scoped" if visible_argv else "empty-plan",
         "baseline_kind": "stage0_validated",
     }
+    # 评审 P2：实际生效的工具配置写入 Trace（PREFLIGHT_COMPLETED 事件）与逐题
+    # 记录——取自 RunConfig 本身，不依赖脚本启动参数
+    preflight_summary = {
+        **preflight_summary,
+        "command_policy": config.command_policy,
+        "context_recent_full_turns": config.context_recent_full_turns,
+    }
     started = time.time()
     cli = None
     container = None
@@ -202,8 +209,10 @@ def run_task(
             workspace.export_patch(run_dir / "changes.patch")
         except Exception:  # noqa: BLE001
             (run_dir / "changes.patch").write_text("", encoding="utf-8", newline="\n")
+        # 必须用本次尝试的 run_id 导出（旧代码用固定 run_{instance_id}，在 run_id
+        # 改为每次尝试唯一之后会导出空 Trace——链路校验发现）
         (run_dir / "trajectory.jsonl").write_text(
-            store.export_trajectory(f"run_{instance_id}"), encoding="utf-8", newline="\n")
+            store.export_trajectory(attempt_run_id), encoding="utf-8", newline="\n")
         (run_dir / "result.json").write_text(
             result.model_dump_json(indent=2), encoding="utf-8", newline="\n")
     finally:

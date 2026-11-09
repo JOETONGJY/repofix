@@ -489,8 +489,34 @@ class TestSearchCodeMultiMatch:
         out = "a.py:10:match one\na.py-11-context line\na.py:12:match two\n"
         matches, truncated = parse_rg_output(out, 100)
         assert truncated is False
-        assert matches[0] == {"path": "a.py", "line": 10, "match_text": "match one"}
-        assert matches[1]["line"] == 11 and "context" in matches[1]["match_text"]
+        assert matches[0] == {"path": "a.py", "line": 10, "match_text": "match one", "kind": "match"}
+        assert matches[1]["line"] == 11 and matches[1]["kind"] == "context"
+
+    def test_parse_rg_context_with_colons_not_misparsed(self):
+        """评审 P2：上下文行内容含冒号时不得被误判为匹配行。"""
+        from repofix.workspace.docker_workspace import parse_rg_output
+
+        out = 'a.py:10:x = 1\na.py-11-d = {"k:v": "a:b"}\n'
+        matches, _ = parse_rg_output(out, 100)
+        assert [m["kind"] for m in matches] == ["match", "context"]
+        assert matches[1]["line"] == 11
+        assert matches[1]["match_text"] == 'd = {"k:v": "a:b"}'
+
+    def test_parse_rg_context_lines_do_not_consume_limit(self):
+        """评审 P2：上下文行不占用 limit 名额（limit 只计匹配行）。"""
+        from repofix.workspace.docker_workspace import parse_rg_output
+
+        out = "a.py:1:m1\na.py-2-c\na.py-3-c\na.py:4:m2\na.py-5-c\na.py:6:m3\n"
+        matches, truncated = parse_rg_output(out, 2)
+        kinds = [m["kind"] for m in matches]
+        assert kinds.count("match") == 2 and truncated is True
+        assert kinds.count("context") == 3  # m1/m2 各自的上下文完整保留
+
+    def test_parse_rg_group_separator_ignored(self):
+        from repofix.workspace.docker_workspace import parse_rg_output
+
+        matches, _ = parse_rg_output("a.py:1:x\n--\nb.py:2:y\n", 100)
+        assert [m["path"] for m in matches] == ["a.py", "b.py"]
 
 
 class TestListFilesPrune:
@@ -510,3 +536,59 @@ class TestListFilesPrune:
         assert rels == ["src/a.py"]
         assert truncated is False
         assert "__pycache__" in LIST_FILES_PRUNE_DIRS
+
+
+class TestReadonlyBypassMatrix:
+    """评审 P0-2：允许选项白名单制——等值形式/组合短选项/绕过矩阵全部封堵。"""
+
+    def test_value_equals_form_bypasses_blocked(self):
+        assert check_command_allowed(["rg", "--pre=cat", "pat", "src"], "coding_benchmark") is False
+        assert check_command_allowed(["rg", "--hostname-bin=x"], "coding_benchmark") is False
+
+    def test_unknown_long_flag_rejected(self):
+        assert check_command_allowed(["rg", "--totally-new-flag", "x"], "coding_benchmark") is False
+
+    def test_combined_short_options_valid(self):
+        assert check_command_allowed(["grep", "-rn", "x", "src"], "coding_benchmark") is True
+        assert check_command_allowed(["ls", "-la", "src"], "coding_benchmark") is True
+
+    def test_combined_with_unknown_char_rejected(self):
+        assert check_command_allowed(["rg", "-A2x", "pat"], "coding_benchmark") is False
+        assert check_command_allowed(["grep", "-Zq", "x"], "coding_benchmark") is False
+
+    def test_numeric_inline_and_separate_values(self):
+        assert check_command_allowed(["rg", "-A2", "pat", "f.py"], "coding_benchmark") is True
+        assert check_command_allowed(["rg", "-A", "2", "pat", "f.py"], "coding_benchmark") is True
+        assert check_command_allowed(["grep", "-m5", "x", "f.py"], "coding_benchmark") is True
+        assert check_command_allowed(["rg", "--max-count=abc", "pat"], "coding_benchmark") is False
+
+    def test_post_dd_operands_checked(self):
+        assert check_command_allowed(["rg", "pat", "--", "/etc/passwd"], "coding_benchmark") is False
+        assert check_command_allowed(["rg", "pat", "--", "../../etc"], "coding_benchmark") is False
+
+    def test_strict_tier_ignores_readonly_tier(self):
+        assert check_command_allowed(["grep", "-n", "x"], "strict") is False
+
+
+class TestListFilesSymlinkBoundary:
+    """评审 P1：list_files 不得跟随目录 symlink 越出工作区。"""
+
+    def test_outbound_symlink_skipped(self, tmp_path):
+        from repofix.workspace.docker_workspace import iter_workspace_files
+        import os
+
+        outside = tmp_path.parent / "outside-sweb-list"
+        outside.mkdir(exist_ok=True)
+        (outside / "secret.txt").write_text("s")
+        link = tmp_path / "leak"
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except OSError:
+            import pytest
+            pytest.skip("symlink not permitted on this fs")
+        (tmp_path / "ok.py").write_text("x")
+        files, _ = iter_workspace_files(tmp_path, 3, 100)
+        rels = [p.relative_to(tmp_path).as_posix() for p in files]
+        assert "ok.py" in rels
+        assert all(not r.startswith("leak") for r in rels)
+        assert not any("secret" in p.name for p in files)
