@@ -2,7 +2,9 @@
 
 搜索语义（TL-11/12 的 rg 解析部分）以纯函数测试覆盖；真实 rg 在 Docker 集成测试验证。
 """
+import base64
 import hashlib
+import json
 
 import pytest
 
@@ -19,6 +21,22 @@ from repofix.workspace.pathsafe import safe_resolve
 
 def read_hash(ws: DockerWorkspace, rel: str) -> str:
     return hashlib.sha256((ws.task_dir / rel).read_bytes()).hexdigest()
+
+
+def _rg_json(kind: str, path: str, line: int, text: str) -> str:
+    """一行 `rg --json` 事件（kind = match / context / begin / end / summary）。
+
+    data.path 与 data.lines 是分字段给出的——文件名里的 `:数字:` / `-数字-`
+    不再参与分隔符解析。
+    """
+    return json.dumps({
+        "type": kind,
+        "data": {
+            "path": {"text": path},
+            "lines": {"text": text + "\n"},
+            "line_number": line,
+        },
+    })
 
 
 class TestReadFile:
@@ -229,7 +247,7 @@ class TestSearchParsing:
         assert result.content == "(no matches)"
 
     def test_rg_output_parse_limit_truncation(self):
-        lines = [f"src/m{i}.py:{i}: match {i}" for i in range(5)]
+        lines = [_rg_json("match", f"src/m{i}.py", i, f"match {i}") for i in range(5)]
         matches, truncated = parse_rg_output("\n".join(lines), limit=3)
         assert len(matches) == 3
         assert truncated is True
@@ -467,7 +485,13 @@ class TestCommandPolicyTiers:
 
 
 class TestSearchCodeMultiMatch:
-    """工具效率 v1：search_code 每文件多匹配 + 上下文行。"""
+    """工具效率 v1：search_code 每文件多匹配 + 上下文行（rg --json 结构化解析）。"""
+
+    def test_build_rg_argv_requests_json_output(self):
+        from repofix.workspace.docker_workspace import build_rg_argv
+
+        argv = build_rg_argv("pat", "src", False, None, 100)
+        assert "--json" in argv  # 结构化输出：文件名含 :数字: 也不歧义
 
     def test_build_rg_argv_max_per_file_and_context(self):
         from repofix.workspace.docker_workspace import build_rg_argv
@@ -484,39 +508,84 @@ class TestSearchCodeMultiMatch:
         assert "-A" not in argv
 
     def test_parse_rg_output_context_lines(self):
-        from repofix.workspace.docker_workspace import parse_rg_output
-
-        out = "a.py:10:match one\na.py-11-context line\na.py:12:match two\n"
+        out = "\n".join([
+            _rg_json("match", "a.py", 10, "match one"),
+            _rg_json("context", "a.py", 11, "context line"),
+            _rg_json("match", "a.py", 12, "match two"),
+        ])
         matches, truncated = parse_rg_output(out, 100)
         assert truncated is False
         assert matches[0] == {"path": "a.py", "line": 10, "match_text": "match one", "kind": "match"}
         assert matches[1]["line"] == 11 and matches[1]["kind"] == "context"
 
-    def test_parse_rg_context_with_colons_not_misparsed(self):
-        """评审 P2：上下文行内容含冒号时不得被误判为匹配行。"""
-        from repofix.workspace.docker_workspace import parse_rg_output
+    def test_parse_rg_path_with_digits_and_colons_not_ambiguous(self):
+        """P2 遗留：文件名本身含 `:数字:` / `-数字-` 时行格式会被截断，JSON 不会。"""
+        out = "\n".join([
+            _rg_json("match", "weird:12:a.py", 5, "code"),
+            _rg_json("context", "dir-7-x.py", 6, "ctx"),
+        ])
+        matches, truncated = parse_rg_output(out, 100)
+        assert truncated is False
+        assert matches[0]["path"] == "weird:12:a.py"
+        assert matches[0]["line"] == 5
+        assert matches[0]["match_text"] == "code"
+        assert matches[1]["path"] == "dir-7-x.py"
+        assert matches[1]["line"] == 6
+        assert matches[1]["kind"] == "context"
 
-        out = 'a.py:10:x = 1\na.py-11-d = {"k:v": "a:b"}\n'
+    def test_parse_rg_context_with_colons_not_misparsed(self):
+        """上下文行内容含冒号时不得被误判为匹配行。"""
+        out = "\n".join([
+            _rg_json("match", "a.py", 10, "x = 1"),
+            _rg_json("context", "a.py", 11, 'd = {"k:v": "a:b"}'),
+        ])
         matches, _ = parse_rg_output(out, 100)
         assert [m["kind"] for m in matches] == ["match", "context"]
         assert matches[1]["line"] == 11
         assert matches[1]["match_text"] == 'd = {"k:v": "a:b"}'
 
     def test_parse_rg_context_lines_do_not_consume_limit(self):
-        """评审 P2：上下文行不占用 limit 名额（limit 只计匹配行）。"""
-        from repofix.workspace.docker_workspace import parse_rg_output
-
-        out = "a.py:1:m1\na.py-2-c\na.py-3-c\na.py:4:m2\na.py-5-c\na.py:6:m3\n"
+        """上下文行不占用 limit 名额（limit 只计匹配行）。"""
+        out = "\n".join([
+            _rg_json("match", "a.py", 1, "m1"),
+            _rg_json("context", "a.py", 2, "c"),
+            _rg_json("context", "a.py", 3, "c"),
+            _rg_json("match", "a.py", 4, "m2"),
+            _rg_json("context", "a.py", 5, "c"),
+            _rg_json("match", "a.py", 6, "m3"),
+        ])
         matches, truncated = parse_rg_output(out, 2)
         kinds = [m["kind"] for m in matches]
         assert kinds.count("match") == 2 and truncated is True
         assert kinds.count("context") == 3  # m1/m2 各自的上下文完整保留
 
-    def test_parse_rg_group_separator_ignored(self):
-        from repofix.workspace.docker_workspace import parse_rg_output
+    def test_parse_rg_ignores_begin_end_summary(self):
+        """begin / end / summary 只描述文件与统计，不是匹配。"""
+        out = "\n".join([
+            json.dumps({"type": "begin", "data": {"path": {"text": "a.py"}}}),
+            _rg_json("match", "a.py", 1, "x"),
+            json.dumps({"type": "end", "data": {"path": {"text": "a.py"},
+                                                "stats": {"matched_lines": 1}}}),
+            json.dumps({"type": "summary", "data": {"stats": {"matched_lines": 1}}}),
+        ])
+        matches, truncated = parse_rg_output(out, 100)
+        assert [m["path"] for m in matches] == ["a.py"]
+        assert truncated is False
 
-        matches, _ = parse_rg_output("a.py:1:x\n--\nb.py:2:y\n", 100)
-        assert [m["path"] for m in matches] == ["a.py", "b.py"]
+    def test_parse_rg_non_utf8_path_falls_back_to_bytes(self):
+        """非 UTF-8 文件名：rg 用 base64 的 bytes 字段，解析不炸、不丢结果。"""
+        encoded = base64.b64encode("café.py".encode("utf-8")).decode("ascii")
+        event = json.dumps({
+            "type": "match",
+            "data": {"path": {"bytes": encoded}, "lines": {"text": "code\n"}, "line_number": 3},
+        })
+        matches, _ = parse_rg_output(event, 100)
+        assert matches[0]["path"] == "café.py"
+        assert matches[0]["line"] == 3
+
+    def test_parse_rg_empty_output(self):
+        assert parse_rg_output("", 100) == ([], False)
+        assert parse_rg_output("\n\n", 100) == ([], False)
 
 
 class TestListFilesPrune:
@@ -574,8 +643,9 @@ class TestListFilesSymlinkBoundary:
     """评审 P1：list_files 不得跟随目录 symlink 越出工作区。"""
 
     def test_outbound_symlink_skipped(self, tmp_path):
-        from repofix.workspace.docker_workspace import iter_workspace_files
         import os
+
+        from repofix.workspace.docker_workspace import iter_workspace_files
 
         outside = tmp_path.parent / "outside-sweb-list"
         outside.mkdir(exist_ok=True)

@@ -28,6 +28,22 @@ def rendered_len(tool: str, raw_chars: int) -> int:
     return min(raw_chars, _RENDER_CAPS.get(tool, 2000)) + 30
 
 
+def elided_rounds(idx: int, recent_full_turns: int) -> list[int]:
+    """第 idx 轮请求时被整轮占位的历史轮次（1-based，闭区间 1..idx-1-N）。
+
+    ContextBuilder 的窗口语义：请求第 idx 轮时，历史为第 1..idx-1 轮，其中最近
+    N 轮保留完整，更早的轮次全部摘要。因此第 8 轮请求、N=6 时应压缩第 1 轮；
+    第 14 轮请求时应压缩第 1–7 轮。旧实现把首尾都从窗口右侧算起
+    （`first_elided = idx - elided`，`last_elided = idx - 1 - N`），导致窗口之外
+    的历史轮次从未被计入——第 8 轮循环为空、第 14 轮只剩第 7 轮，系统性低估
+    了 Context Recency 的 Token 节省。
+    """
+    if recent_full_turns <= 0:
+        return []
+    elided = max(0, (idx - 1) - recent_full_turns)
+    return list(range(1, elided + 1))
+
+
 def analyze(trajectory: Path, recent_full_turns: int) -> dict:
     events = [json.loads(line) for line in trajectory.read_text(encoding="utf-8").splitlines() if line.strip()]
     tool_by_call: dict[str, str] = {}
@@ -59,17 +75,15 @@ def analyze(trajectory: Path, recent_full_turns: int) -> dict:
             by_tool[o["tool"]] = by_tool.get(o["tool"], 0) + o["chars"]
     total_completion = sum(r["completion_tokens"] for r in rounds)
 
-    # 近期窗口模拟：第 r 轮，轮次 <= r-1-N 的整轮被占位
+    # 近期窗口模拟：第 idx 轮请求时，第 1..idx-1-N 轮整轮被占位
     saved_tokens = 0
-    for idx, r in enumerate(rounds, start=1):
-        if recent_full_turns <= 0:
-            break
-        elided = max(0, (idx - 1) - recent_full_turns)
-        if elided == 0:
+    elided_requests = 0
+    for idx in range(1, len(rounds) + 1):
+        to_elide = elided_rounds(idx, recent_full_turns)
+        if not to_elide:
             continue
-        first_elided = idx - elided
-        last_elided = idx - 1 - recent_full_turns
-        for rnd in range(first_elided, last_elided + 1):
+        elided_requests += 1
+        for rnd in to_elide:
             if rnd - 1 < len(rounds):
                 # 被占位轮次的 assistant 体量 = 该轮真实 completion（其输出不再重发）
                 saved_tokens += rounds[rnd - 1]["completion_tokens"]
@@ -83,6 +97,7 @@ def analyze(trajectory: Path, recent_full_turns: int) -> dict:
         "total_completion_tokens": total_completion,
         "output_chars_by_tool": dict(sorted(by_tool.items(), key=lambda kv: -kv[1])),
         "simulated_recent_full_turns": recent_full_turns,
+        "simulated_elided_requests": elided_requests,
         "simulated_saved_tokens": saved_tokens,
         "simulated_saving_pct": round(100 * saved_tokens / total_prompt, 1) if total_prompt else 0.0,
         "per_round": [{"step": r["step"], "prompt_tokens": r["prompt_tokens"],

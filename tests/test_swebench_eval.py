@@ -160,7 +160,9 @@ def test_parse_short_summary_parametrized_ids():
         "FAILED lib/x.py::test_y[a-b] - ValueError: x - y\n"
     )
     statuses = parse_short_summary(output)
-    assert statuses["lib/matplotlib/tests/test_matplotlib.py::test_parse_to_version_info[3.5.0-version_tuple0]"] == "PASSED"
+    parametrized = ("lib/matplotlib/tests/test_matplotlib.py"
+                    "::test_parse_to_version_info[3.5.0-version_tuple0]")
+    assert statuses[parametrized] == "PASSED"
     # ' - ' 以首个为界；参数化 id 中的 '-' 不截断
     assert statuses["lib/x.py::test_y[a-b]"] == "FAILED"
 
@@ -355,3 +357,28 @@ def test_build_task_stack_passes_policy_to_both_layers(tmp_path, monkeypatch):
         assert workspace.command_policy == policy
         assert dispatcher.command_policy == policy
         store.close()
+
+
+def test_effective_preflight_summary_uses_runconfig_not_script_args():
+    """P2 回归：写入 Trace 的档位/窗口值必须取自 RunConfig 本身。
+
+    冒烟脚本曾声明"实际生效的档位写入 PREFLIGHT_COMPLETED"，但它从不运行
+    AgentRunner 主循环（该事件由 runner.run() 生成）——声明不成立，已从脚本
+    移除。真正可在此验证的一步是摘要组装：Trace 记录的值来自 RunConfig，
+    而不是脚本启动参数的副本。
+    """
+    from repofix.contracts import RunConfig
+    from repofix.evaluation.swebench.runner import effective_preflight_summary
+
+    config = RunConfig(model_id="m", command_policy="coding_benchmark",
+                       context_recent_full_turns=6, review_enabled=False)
+    summary = effective_preflight_summary({"steps": "stage0-validated"}, config)
+    assert summary["command_policy"] == "coding_benchmark"
+    assert summary["context_recent_full_turns"] == 6
+    assert summary["steps"] == "stage0-validated"  # 既有字段保留
+
+    # 默认值 = v0 行为（strict + 关闭窗口），不能被悄悄改写
+    default_summary = effective_preflight_summary(
+        {}, RunConfig(model_id="m", review_enabled=False))
+    assert default_summary["command_policy"] == "strict"
+    assert default_summary["context_recent_full_turns"] == 0

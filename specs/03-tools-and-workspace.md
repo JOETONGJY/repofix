@@ -37,9 +37,11 @@
 | path | str | "." | 同上 |
 | regex | bool | **false** | 默认普通字符串搜索；显式 true 才启用正则 |
 | glob | str \| null | null | 如 "tests/**" |
-| limit | int | 100 | ≤ 500 |
+| limit | int | 100 | ≤ 500（计入**匹配行**总数） |
+| max_per_file | int | 5 | 1–20；每文件最多报告的匹配数（v0 固定 1，实测造成同文件重复搜索） |
+| context | int | 0 | 0–5；每条匹配的后续上下文行数（上下文行不占 limit 名额） |
 
-返回：`[{path, line, match_text}]`、`truncated`。底层 ripgrep，**不经 Shell 字符串拼接**。**搜索无匹配是正常结果（SUCCEEDED 空结果），不是失败。**
+返回：`[{path, line, match_text, kind}]`、`truncated`（`kind` = `match` / `context`）。底层 `ripgrep --json` 结构化事件流（path / line_number / lines.text 分字段，文件名含 `:数字:` 时不再歧义），**不经 Shell 字符串拼接**。**搜索无匹配是正常结果（SUCCEEDED 空结果），不是失败。**
 
 ### read_file — 副作用：read_only
 

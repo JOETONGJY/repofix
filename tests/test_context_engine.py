@@ -510,18 +510,27 @@ class TestM3PolishWiring:
         assert seen == ["real" + "0" * 56]  # 不再是 m1-no-workspace 占位
 
     def test_preflight_summary_recorded_when_provided(self, registry):
-        """P1 遗留清理：传入真实摘要才记录 PREFLIGHT_COMPLETED；不传不发占位事件。"""
+        """P1 遗留清理：传入真实摘要才记录 PREFLIGHT_COMPLETED；不传不发占位事件。
+
+        P2 补充：载荷必须原样保留实际生效的档位与窗口值——这是冒烟脚本
+        无法验证（不跑 Runtime 主循环）的部分，改由 Scripted Model Trace 锁定。
+        """
 
         finish = [model_response("d1", [make_tool_call("f1", "finish", summary="x")])]
         report = passed_report()
 
         runner_with, store_with = self._runner(
             registry, finish, FakeVerifier([report]),
-            preflight_summary={"steps": "ok"},
+            preflight_summary={"steps": "ok", "command_policy": "coding_benchmark",
+                               "context_recent_full_turns": 6},
         )
         runner_with.run()
-        types_with = [e.type for e in store_with.get_events("run_pf")]
-        assert EventType.PREFLIGHT_COMPLETED in types_with
+        events_with = store_with.get_events("run_pf")
+        assert EventType.PREFLIGHT_COMPLETED in [e.type for e in events_with]
+        payload = next(e.payload for e in events_with
+                       if e.type is EventType.PREFLIGHT_COMPLETED)
+        assert payload["command_policy"] == "coding_benchmark"
+        assert payload["context_recent_full_turns"] == 6
 
         runner_without, store_without = self._runner(registry, finish, FakeVerifier([report]))
         result = runner_without.run()

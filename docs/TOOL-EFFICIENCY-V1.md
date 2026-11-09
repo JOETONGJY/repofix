@@ -1,9 +1,9 @@
 # RepoFix 工具效率优化 v1（SWE-bench 扩展前）
 
-- 日期：2026-11-08
-- 范围：GPT 评审定义的 "SWE-bench Scalability & Tool Efficiency Optimization v1"——P0-1/2/3 + P1-1 全部落地，P1-2 为设计草图，P1-3 离线分析完成
+- 日期：2026-11-08（第三轮 Review 修订：2026-11-09）
+- 范围：GPT 评审定义的 "SWE-bench Scalability & Tool Efficiency Optimization v1"——P0-1/2/3 + P1-1 全部落地，P1-2 为设计草图，P1-3 离线分析完成；第三轮评审的 **P1-2（离线分析索引错误：确认为真实缺陷并修复）/ P1-3（search_code Schema：5650030 已实现，本轮补齐校验测试并收紧范围）/ 三项 P2** 已处置，见二c（逐项标注"哪轮修了什么"，避免把既有实现算成本轮新增）
 - 原则：不改动 Main + Reviewer 架构、不开放任意 Shell、不引入 RAG/LLM Summary、不给模型任何隐藏信息；全部改动保持沙箱边界、审计与预算语义
-- 测试：**326 passed, 3 skipped**（两轮合计新增 25 项）；ruff 全绿；端到端链路冒烟 20 项全过（零 Token）
+- 测试：**358 passed, 2 skipped**（三轮合计新增 59 项）；ruff 全绿；端到端链路冒烟 20 项全过（零 Token）
 
 ## 一、实际修改
 
@@ -50,21 +50,31 @@
 > **数据勘误（第二轮 Review 后）**：初版分析用的是陈旧 Trace 副本（run_id 改为
 > 每次尝试唯一后，导出路径未同步，各档 trajectory.jsonl 都是 200k 档的旧内容；
 > 该导出 bug 已修复，24 条历史 Trace 已从权威 SQLite 按 token 量匹配恢复）。
-> 下表为恢复后的正确数据。
+>
+> **第二次勘误（第三轮 Review，评审 P1-2）**：模拟器的近期窗口索引算错了——
+> `first_elided = idx - elided` 与 `last_elided = idx - 1 - N` 把窗口首尾都从
+> 右侧算起，第 8 轮请求（N=6）循环为空、第 14 轮只算第 7 轮，窗口之外的
+> 1..N 轮历史从未被计入。改为 `for rnd in range(1, elided + 1)` 后节省比例
+> 显著上调（见下表）。修正后的口径与独立实现（闭式
+> `saved = Σ_i cost(i)·max(0, R−i−N)`）在 9 条 Trace × 2 个 N 上逐条吻合，
+> 并由 `tests/test_context_analysis.py` 锁定。
 
-| 运行 | 轮数 | prompt 总量 | N=6 预计节省 | N=12 预计节省 |
+| 运行 | 轮数 | prompt 总量 | N=6 节省（修正后） | N=12 节省（修正后） |
 | --- | --- | --- | --- | --- |
-| sklearn-10297（completed） | 21 | 232,818 | 7.9% | 0.0% |
-| matplotlib-18869 | 46 | 587,877 | 41.9% | 19.2% |
-| sphinx-10325 | 41 | 606,974 | 44.9% | 24.0% |
-| seaborn-2848 | 38 | 596,060 | 51.4% | 12.6% |
-| pylint-5859 | 43 | 506,082 | 28.7% | 10.7% |
+| sklearn-10297（completed） | 21 | 232,818 | 52.9%（原 7.9%） | 21.4%（原 0.0%） |
+| matplotlib-18869 | 46 | 587,877 | 64.4%（原 41.9%） | 47.5%（原 19.2%） |
+| sphinx-10325 | 41 | 606,974 | 78.9%（原 44.9%） | 57.0%（原 24.0%） |
+| seaborn-2848 | 38 | 596,060 | 75.8%（原 51.4%） | 49.2%（原 12.6%） |
+| pylint-5859 | 43 | 506,082 | 65.8%（原 28.7%） | 49.3%（原 10.7%） |
 
-**三个诚实的结论**：
+**四个诚实的结论**：
 
-1. **真实 600k 档（21-46 轮长运行）上，近期窗口收益显著**：N=6 省 8-51%、N=12 省 0-24%。N=6 优于 N=12——更激进的窗口在长运行上收益更大，A/B 时建议以 N=6 为主配置、N=12 为对照。
-2. **成本结构的关键发现（测量而非猜测）**：matplotlib 第 6-10 轮每轮仅注入 24-59 字符工具输出，prompt 却每轮增长 ~900 token——**大头是模型自身历史输出（每轮 ~1k completion token 的失败 diff 原文等）被逐轮重发计费**。context 摘要必须覆盖 assistant 消息体（已实现），仅压工具输出省不出成本。
-3. **数据卫生教训**：Trace 副本与权威 SQLite 的不一致差点让优化建立在错误结论上（初版 0-9% 全部来自陈旧数据）。"链路上验证启用"必须包含"产物与存储一致"。
+1. **近期窗口的收益被旧分析严重低估**：修正后 N=6 省 52.9-78.9%、N=12 省 21.4-57.0%；旧口径分别是 7.9-51.4% 与 0.0-24.0%。旧公式只统计"窗口内最靠右的少数轮次"，漏掉了窗口之外的全部历史。
+2. **N=6 仍优于 N=12**（5 条长运行逐条成立）——结论方向不变，但差距比原文档更大、更一致：窗口越小、越早开始摘要，节省越多。A/B 仍以 N=6 为主配置、N=12 为对照；但 N=12 不再是"接近无效"的对照（21-57%），因此对照组本身也有可观收益。
+3. **成本结构的关键发现（测量而非猜测）**：matplotlib 第 6-10 轮每轮仅注入 24-59 字符工具输出，prompt 却每轮增长 ~900 token——**大头是模型自身历史输出（每轮 ~1k completion token 的失败 diff 原文等）被逐轮重发计费**。context 摘要必须覆盖 assistant 消息体（已实现），仅压工具输出省不出成本。
+4. **数据卫生教训（现在是两条）**：既包括"Trace 副本与权威 SQLite 不一致"，也包括"模拟器自身的索引公式未被交叉验证"——定量结论必须与独立实现对照，不能只看脚本能跑通。
+
+补充口径（同批 9 条 600k 档 Trace 全部重跑）：`pylint-dev__astroid-1196` 只有 6 轮、窗口未满（N=6 / N=12 均为 0%）；`pytest-11143`（20 轮）N=6 27.8% / N=12 9.7%；`pallets__flask-4992`（28 轮）53.9% / 30.7%；`pydata__xarray-3364`（28 轮）65.1% / 38.5%。轮数越多、收益越大；14 轮左右开始出现节省。
 
 工具摩擦数据（P1-3 前置统计）：21 次 `permission_denied`（去重后 5/8 任务命中，`grep -n`/`ls` 为主）、2 次只读拒绝引发的批次级联——P0-1/P1-1 直接对症。
 
@@ -77,10 +87,22 @@
 | **P1a** | `list_files` 遍历不再跟随目录 symlink（`is_dir()` 会跟随）：越界 symlink 静默跳过，文件型 symlink 仅当解析后仍位于工作区内时列出 |
 | **P1b** | CLI 暴露 `--context-recent-full-turns`；评测逐题记录（PREFLIGHT_COMPLETED 事件 + preflight_summary）写入实际生效的 `command_policy` 与窗口值——取自 RunConfig 本身而非脚本参数 |
 | **P1c** | README 对照组结果同步为 0/8（含假阳性注记）、v0/v1 版本口径说明 |
-| **P2** | `parse_rg_output` 用正则严格区分匹配行（`path:N:`）与上下文行（`path-N-`）：内容含冒号不再误判，上下文行不占 limit 名额，`--` 分组忽略；匹配/上下文行在渲染中用 `:`/`-` 前缀区分 |
+| **P2** | `parse_rg_output` 用正则严格区分匹配行（`path:N:`）与上下文行（`path-N-`）：内容含冒号不再误判，上下文行不占 limit 名额，`--` 分组忽略；匹配/上下文行在渲染中用 `:`/`-` 前缀区分（**第三轮已进一步改为 `rg --json`，见二c——行格式在文件名本身含 `:数字:` 时仍会歧义**） |
 | **Trace 导出 bug（链路校验发现）** | `run_task` 导出 trajectory 用的是固定 `run_{instance_id}`，而 run_id 已改为每次尝试唯一——导出的 Trace 实际是陈旧内容。已改为导出本次尝试的 run_id，并从权威 SQLite 恢复了 24 条历史 Trace |
 
 **端到端链路冒烟（`scripts/smoke_tool_efficiency_v1.py`，零模型 Token，真实容器）**：走通 eval runner 装配 → Dispatcher → DockerWorkspace → 官方派生镜像容器内执行。20 项检查全部通过——coding_benchmark 下 grep/rg/ls 两层放行且容器内真实执行成功、strict 下同样命令两层皆拒、危险参数（`--pre=`/`-f`/绝对路径/`..`）两层皆拒、绕过 Workspace 直接调用执行层同样拒绝（纵深防御）、pytest 命令不受影响、两层策略一致（P0-1 回归防护）。
+
+**冒烟脚本的覆盖边界（第三轮 P2 修订）**：脚本只组装执行栈并直接驱动 Dispatcher，**不运行 AgentRunner 主循环**——而 `PREFLIGHT_COMPLETED` 事件由 `AgentRunner.run()` 生成。原 docstring 第 ⑤ 条"实际生效的档位写入 Trace"属于无法由该脚本证明的声明，已删除并改由 Scripted Model 测试覆盖：`test_context_engine.py::test_preflight_summary_recorded_when_provided`（断言事件载荷里的 `command_policy` / `context_recent_full_turns`）与 `test_swebench_eval.py::test_effective_preflight_summary_uses_runconfig_not_script_args`（断言摘要取自 RunConfig 而非启动参数）。
+
+## 二c、第三轮 Review 修订（b941bd6 后）
+
+| 项 | 修订 |
+| --- | --- |
+| **P1-2 离线分析索引错误** | `scripts/analyze_context_efficiency.py` 的占位集合改为 `elided_rounds(idx, N) = 1..idx-1-N`（`for rnd in range(1, elided + 1)`）。旧公式首尾都从窗口右侧算起：第 8 轮请求为空、第 14 轮只剩第 7 轮 → **系统性低估节省比例**。修正后 N=6 省 52.9-78.9%、N=12 省 21.4-57.0%；"N=6 优于 N=12"的方向仍成立（5/5 条长运行），但旧口径严重失真（见第二节表格）。新增 `tests/test_context_analysis.py`（15 项）与独立闭式实现交叉验证，另加 `simulated_elided_requests` 便于审计。Runtime 侧的 `ContextBuilder` 近期窗口逻辑未受影响——问题只在离线模拟器 |
+| **P1-3 search_code Schema** | **核对结论：该参数早已在 5650030 声明**（评审看到的快照更早，SearchCodeArgs 当时确实只有 5 个字段）。本轮做三件事：① `max_per_file` 上限 50 → 20（评审建议的合理范围），`context` 保持 0-5；② Tool Description 明确两者语义与默认值（此前描述只说 "up to max_per_file"，没有给范围）；③ **补齐此前完全缺失的 Dispatcher Schema 校验测试**——原缺口是"没有任何测试证明能力真的穿过 Schema → Dispatcher → Executor"，`tests/test_tool_schema.py`（11 项）锁定 Schema 暴露/边界/默认值/描述、校验通过、越界拒绝、未知字段仍拒绝、参数原样到达 Executor |
+| **P2 CLI 参数** | **核对结论：`--context-recent-full-turns` 已在 b941bd6 加入并传入 `RunConfig`**（评审快照同样更早）。本轮补 3 项回归锁定"文档支持 = 入口支持"：Click 参数确实注册、值进入 RunConfig、默认 0 保持 v0 行为 |
+| **P2 Trace 冒烟声明** | 见二b 末段：删除冒烟脚本无法证明的第 ⑤ 条，改由 Scripted Model Trace 测试 + 摘要组装单测覆盖 |
+| **P2 rg 解析歧义** | `build_rg_argv` 改用 `rg --json`，`parse_rg_output` 解析结构化事件流（path / line_number / lines.text 分字段）；文件名含 `:数字:` 或 `-数字-` 不再有歧义，非 UTF-8 路径走 base64 分支，begin/end/summary 忽略，match 计 limit、context 不占名额。渲染给模型的格式不变（`path:line:` / `path-line-`），因此不影响 prompt 语义与既有 Trace 口径 |
 
 ## 三、兼容性与安全
 
@@ -90,11 +112,15 @@
 
 ## 四、测试
 
-新增 14 项：命令档位 6（strict 不变 / 只读层放行 / 危险参数与路径拒绝 / 只读意图判定）、search 多匹配与上下文解析 3、list_files 剪枝 1、调度器级联语义 2（只读拒绝不级联 / `pip install` 拒绝仍级联）、Context 近期窗口 4（旧轮摘要、配对完整、默认关闭、与预算压缩叠加）。全套 **315 passed**，ruff 全绿。
+第二轮新增 14 项：命令档位 6（strict 不变 / 只读层放行 / 危险参数与路径拒绝 / 只读意图判定）、search 多匹配与上下文解析 3、list_files 剪枝 1、调度器级联语义 2（只读拒绝不级联 / `pip install` 拒绝仍级联）、Context 近期窗口 4（旧轮摘要、配对完整、默认关闭、与预算压缩叠加）。
+
+第三轮新增 34 项：离线分析索引 15（占位集合、8/14/21/46 轮 × N=6/12 的闭式交叉验证、窗口未满、关闭、单调性）、`search_code` Schema/Dispatcher 11（Schema 暴露与边界、合法通过、越界拒绝、未知字段拒绝、参数到达 Executor）、CLI `--context-recent-full-turns` 3、评测摘要组装 1（`effective_preflight_summary` 取自 RunConfig）、rg JSON 解析 net +4（4 项行格式用例改写为 8 项 JSON 用例，含文件名含 `:数字:` 的歧义回归与非 UTF-8 路径）。
+
+全套 **358 passed, 2 skipped**（不含 Docker 集成与真实 API 用例），ruff 全绿。本机缺少 Docker daemon 与宿主 `rg` 时，两项环境依赖用例（`test_auto_discovery_runs_pytest`、`test_derive_visible_plan_empty_when_no_match`）会失败——与本轮改动无关，属环境前置缺失。
 
 ## 五、A/B 提案（待批准后才调用模型）
 
-- **A 组（v1 配置）**：现有 8 题冻结集，`--command-policy coding_benchmark --context-recent-full-turns 6`，预算与 600k 档对齐（600k/题、60 调用），单次运行。N=6 依据勘误后的分析（长运行上 N=6 节省 8-51%，优于 N=12 的 0-24%）。
+- **A 组（v1 配置）**：现有 8 题冻结集，`--command-policy coding_benchmark --context-recent-full-turns 6`，预算与 600k 档对齐（600k/题、60 调用），单次运行。N=6 依据修正后的分析（长运行上 N=6 节省 52.9-78.9%，优于 N=12 的 21.4-57.0%）。
 - **对照基线**：v0 的 600k 档记录（2/8、425k tok/题）不重跑、不覆盖。
 - **观测指标**：Resolved@1、命令拒绝次数（预期 →~0）、批次级联次数（预期 →~0）、平均 tokens/题、每轮平均 prompt、patch 应用率、失败类型分布。
 - **预算**：≤5M token（与 600k 档实际消耗上限对齐）。
@@ -102,4 +128,4 @@
 
 ## 六、对 20-50 题扩展的预期
 
-命令摩擦清零 + search 多匹配 + 批次不连坐，直接作用于"探索期预算耗尽"这一最大失败桶；Context 窗口在长运行（>25 轮）上收益显现。真正的天花板仍是模型 diff 生成能力（matplotlib 类失败），这属于模型侧，Harness 侧的改进空间本轮已按证据收口。
+命令摩擦清零 + search 多匹配 + 批次不连坐，直接作用于"探索期预算耗尽"这一最大失败桶；Context 窗口在 20 轮以上运行上收益显著（修正后 27.8-78.9%，14 轮左右开始出现节省）。真正的天花板仍是模型 diff 生成能力（matplotlib 类失败），这属于模型侧，Harness 侧的改进空间本轮已按证据收口。

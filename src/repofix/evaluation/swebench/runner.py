@@ -43,6 +43,21 @@ class EvalBudgetExceeded(RuntimeError):
     """跨任务 Token 台账触顶：拒绝继续新的模型调用任务。"""
 
 
+def effective_preflight_summary(base: dict, config: RunConfig) -> dict:
+    """把"实际生效"的工具配置并入 Preflight 摘要（评审 P2）。
+
+    值取自 RunConfig 本身，而不是脚本启动参数——否则 Trace 记录的可能是一个
+    从未生效的档位。该摘要由 AgentRunner 写入 PREFLIGHT_COMPLETED 事件，
+    因此逐题 Trace 可追溯"这次到底用了哪档命令权限、哪个近期窗口"。
+    抽成纯函数以便零 Docker 单测（此前只在 run_instance 内联，无测试覆盖）。
+    """
+    return {
+        **base,
+        "command_policy": config.command_policy,
+        "context_recent_full_turns": config.context_recent_full_turns,
+    }
+
+
 def build_task_stack(
     *,
     instance_id: str,
@@ -182,11 +197,7 @@ def run_task(
     }
     # 评审 P2：实际生效的工具配置写入 Trace（PREFLIGHT_COMPLETED 事件）与逐题
     # 记录——取自 RunConfig 本身，不依赖脚本启动参数
-    preflight_summary = {
-        **preflight_summary,
-        "command_policy": config.command_policy,
-        "context_recent_full_turns": config.context_recent_full_turns,
-    }
+    preflight_summary = effective_preflight_summary(preflight_summary, config)
     started = time.time()
     cli = None
     container = None

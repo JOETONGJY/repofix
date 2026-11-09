@@ -44,7 +44,7 @@ class SearchCodeArgs(_StrictModel):
     glob: str | None = None
     limit: int = Field(default=100, ge=1, le=500)
     # 每文件最多报告的匹配数（v0 固定 1 隐藏同文件后续匹配，实测造成重复搜索）
-    max_per_file: int = Field(default=5, ge=1, le=50)
+    max_per_file: int = Field(default=5, ge=1, le=20)
     # 每条匹配的后续上下文行数（0 = 不带上下文，控制输出 Token）
     context: int = Field(default=0, ge=0, le=5)
 
@@ -157,8 +157,10 @@ def register_default_tools(registry: ToolRegistry) -> None:
         ToolSpec(
             "search_code",
             "Search code by literal string (default) or regex within the workspace. "
-            "Reports up to max_per_file matches per file (use a higher value to see all "
-            "occurrences in one call) with optional trailing context lines.",
+            "Returns matching lines rendered as path:line, by default up to 5 matches "
+            "per file. limit caps the total number of matches; max_per_file (1-20) "
+            "caps matches reported per file; context (0-5) adds trailing context lines "
+            "per match when you need surrounding code.",
             SearchCodeArgs,
             ToolSideEffect.READ_ONLY,
             read_actors,

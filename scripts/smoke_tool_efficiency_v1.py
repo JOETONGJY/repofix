@@ -8,8 +8,14 @@
      执行期）都放行，且在容器内真实执行成功；
   ② strict 档：同样命令在两层都被拒（v0 行为不变）；
   ③ 危险参数（--pre=、-f、绝对路径、..）在两个校验层都被拒；
-  ④ 两层使用同一策略（防 P0-1 回归：Workspace 漏传 command_policy）；
-  ⑤ 实际生效的档位写入 Trace（PREFLIGHT_COMPLETED 事件）。
+  ④ 两层使用同一策略（防 P0-1 回归：Workspace 漏传 command_policy）。
+
+覆盖边界（诚实声明）：「实际生效的档位写入 Trace（PREFLIGHT_COMPLETED 事件）」
+不在本脚本内验证——本脚本不启动 AgentRunner 主循环，而该事件由
+AgentRunner.run() 生成。该验收由单元测试覆盖：
+tests/test_swebench_eval.py（preflight_summary 按 RunConfig 组装）
+与 tests/test_context_engine.py::test_preflight_summary_recorded_when_provided
+（事件载荷回读）。
 
 不调用 DeepSeek：只组装执行栈并直接驱动 Dispatcher，不运行 AgentRunner 主循环。
 """

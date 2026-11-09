@@ -130,10 +130,12 @@ class TestInputValidation:
 
 
 def invoke_with_stack(sample_repo, tmp_path, responses, verifier_reports,
-                      extra=None, executor=None):
+                      extra=None, executor=None, captured=None):
     data_dir = tmp_path / "data"
 
     def fake_stack(task_spec, config, run_id):
+        if captured is not None:
+            captured["config"] = config
         return build_real_fake_stack(
             sample_repo, tmp_path, task_spec, config, run_id,
             responses, verifier_reports, executor=executor,
@@ -283,3 +285,43 @@ class TestArtifacts:
         run_dirs = sorted((tmp_path / "data" / "runs").iterdir())
         assert len(run_dirs) == 2
         assert run_dirs[0].name != run_dirs[1].name  # 不同 run_id、相互隔离
+
+
+class TestContextRecencyOption:
+    """P2-1 回归：CLI 的 --context-recent-full-turns 必须真正进入 RunConfig。
+
+    文档声称 CLI 支持该参数；缺参数时 Typer 会直接拒绝，用户只能改脚本，
+    而"文档支持、入口不支持"正是评审指出的 CLI 遗漏。
+    """
+
+    def test_option_registered_on_run_command(self):
+        """直接检查 Click 参数注册：帮助文本的换行/编码在测试终端不可靠。"""
+        import typer
+
+        run_cmd = typer.main.get_command(app).commands["run"]
+        registered = {opt for param in run_cmd.params
+                      for opt in (*param.opts, *param.secondary_opts)}
+        assert "--context-recent-full-turns" in registered
+
+    def test_option_reaches_runconfig(self, sample_repo, tmp_path):
+        captured = {}
+        result = invoke_with_stack(
+            sample_repo, tmp_path,
+            [model_response("d1", [make_tool_call("f1", "finish", summary="done")])],
+            [passed_report()],
+            extra=["--context-recent-full-turns", "6"],
+            captured=captured,
+        )
+        assert result.exit_code == 0
+        assert captured["config"].context_recent_full_turns == 6
+
+    def test_default_keeps_v0_behavior(self, sample_repo, tmp_path):
+        captured = {}
+        result = invoke_with_stack(
+            sample_repo, tmp_path,
+            [model_response("d1", [make_tool_call("f1", "finish", summary="done")])],
+            [passed_report()],
+            captured=captured,
+        )
+        assert result.exit_code == 0
+        assert captured["config"].context_recent_full_turns == 0  # 默认关闭，旧实验可复现

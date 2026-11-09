@@ -10,8 +10,9 @@
 版本标识（CONS-03）：patch_hash = sha256(get_changes 相对 base_commit 的 unified
 diff)，本模块的 compute_patch_hash 是唯一生成函数，贯穿 Verifier / Reviewer / RunResult。
 """
+import base64
 import hashlib
-import re
+import json
 import subprocess
 from pathlib import Path
 
@@ -249,9 +250,13 @@ def build_rg_argv(pattern: str, path: str, regex: bool, glob: str | None, limit:
     max_per_file：每文件最多报告的匹配数（v0 固定 1，实测导致模型为同文件
     其他匹配重复搜索）；context：每条匹配的后续上下文行数（默认 0，控制
     输出 Token）。
+
+    输出格式用 `--json`（结构化事件流）：行格式 `path:12:content` 在文件名本身
+    含 `:数字:` / `-数字-` 时无法可靠切分（见 parse_rg_output），JSON 把
+    path / line_number / lines.text 分字段给出，歧义从根上消失。JSON 模式自带
+    文件名与行号，不再需要 --no-heading / --with-filename / --line-number / --color。
     """
-    argv = ["rg", "--no-heading", "--with-filename", "--line-number", "--color", "never",
-            "--max-count", str(max(1, int(max_per_file)))]
+    argv = ["rg", "--json", "--max-count", str(max(1, int(max_per_file)))]
     if not regex:
         argv.append("--fixed-strings")
     if glob:
@@ -263,39 +268,61 @@ def build_rg_argv(pattern: str, path: str, regex: bool, glob: str | None, limit:
     return argv
 
 
-def parse_rg_output(stdout: str, limit: int) -> tuple[list[dict], bool]:
-    """解析 rg 行输出为 [{path, line, match_text, kind}]；返回 (matches, truncated)。
+def _rg_json_text(field: object) -> str:
+    """rg --json 文本字段：正常为 {"text": str}；非 UTF-8 时退化为 {"bytes": base64}。"""
+    if not isinstance(field, dict):
+        return ""
+    if "text" in field:
+        return str(field["text"])
+    if "bytes" in field:
+        try:
+            return base64.b64decode(field["bytes"]).decode("utf-8", errors="replace")
+        except (ValueError, TypeError):
+            return ""
+    return ""
 
-    两种行格式（评审 P2：用正则严格区分，不靠 split 猜测）：
-    - 匹配行  `path:12:content`  → kind="match"（计入 limit）
-    - 上下文行 `path-12-content` → kind="context"（rg -A 输出；不计入 limit，
-      只附着于其前一条匹配——内容含冒号也不会被误判为匹配行）
-    `--` 分组分隔行忽略。
+
+def parse_rg_output(stdout: str, limit: int) -> tuple[list[dict], bool]:
+    """解析 `rg --json` 事件流为 [{path, line, match_text, kind}]；返回 (matches, truncated)。
+
+    为什么用 JSON（评审 P2 遗留）：旧的行格式 `path:12:content` / `path-12-content`
+    只能靠正则猜分隔符位置。"分隔符更靠前者优先"的启发式在文件名本身含
+    `:数字:`（如 `weird:12:a.py`）时仍会把路径截断成长度错误的 path/line——
+    `weird:12:a.py:5:code` 会被解析成 path=`weird`, line=`12`。ripgrep 的
+    `--json` 把 path / line_number / lines.text 分开给出，文件名里的冒号与
+    连字符不再有歧义。
+
+    事件类型：match（计入 limit）/ context（rg -A 输出，不占 limit）/ begin /
+    end / summary（忽略）。rg >= 0.10 支持 --json；评测链路固定注入 14.1.1。
     """
     matches: list[dict] = []
     truncated = False
-    match_re = re.compile(r"^(.+?):(\d+):(.*)$")
-    context_re = re.compile(r"^(.+?)-(\d+)-(.*)$")
     match_count = 0
-    for line in stdout.splitlines():
-        if not line.strip() or line == "--":
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("{"):
+            continue  # 非 JSON 行（如容器层警告）不是搜索结果
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
             continue
-        m = match_re.match(line)
-        c = context_re.match(line)
-        # 两者都能匹配时取"分隔符位置更靠前"者——路径本身不含 ":" 或 "-数字-"
-        # 时二者不会冲突；冲突时 rg 输出的真实分隔符位于路径之后的第一个位置
-        if m and (not c or m.start(2) <= c.start(2)):
+        kind = event.get("type")
+        if kind not in ("match", "context"):
+            continue  # begin / end / summary 只描述文件与统计，不是匹配
+        data = event.get("data") or {}
+        if kind == "match":
             if match_count >= limit:
                 truncated = True
                 break
             match_count += 1
-            matches.append({"path": m.group(1), "line": int(m.group(2)),
-                            "match_text": m.group(3), "kind": "match"})
-        elif c:
-            if truncated:
-                break
-            matches.append({"path": c.group(1), "line": int(c.group(2)),
-                            "match_text": c.group(3), "kind": "context"})
+        elif truncated:
+            break  # 已达 limit：后续匹配的上下文一并不再附加
+        matches.append({
+            "path": _rg_json_text(data.get("path")),
+            "line": int(data.get("line_number") or 0),
+            "match_text": _rg_json_text(data.get("lines")).rstrip("\n"),
+            "kind": kind,
+        })
     return matches, truncated
 
 
