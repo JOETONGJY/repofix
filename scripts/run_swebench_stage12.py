@@ -67,7 +67,10 @@ def main() -> int:
     parser.add_argument("--command-policy", default="strict", choices=("strict", "coding_benchmark"),
                         help="RepoFix v1 起使用 coding_benchmark（受控只读命令）")
     parser.add_argument("--context-recent-full-turns", type=int, default=0,
-                        help="Context 近期完整窗口（v1 建议 12；0 = 关闭 = v0 行为）")
+                        help="Context 近期完整窗口（v1 建议 6；0 = 关闭 = v0 行为）")
+    parser.add_argument("--arm-tag", default=None,
+                        help="实验组标记（如 tierA4-1M / v1-ab）：记录文件保存为 records-formal-<tag>.json，"
+                             "避免不同版本对照混用同一 records 文件（缓存复用防护）")
     args = parser.parse_args()
 
     if not args.approve_tokens:
@@ -124,7 +127,10 @@ def main() -> int:
         raise SystemExit(f"[stage12] docker daemon unreachable: {_probe.stderr.strip()[:120]}; "
                          "start Docker Desktop first (no tasks were marked)")
     rg_path = download_rg(DATA_ROOT / "tools", proxy=args.proxy)
-    records_path = FREEZE_DIR / f"records-{args.stage}.json"
+    records_name = (f"records-{args.stage}-{args.arm_tag}.json" if args.arm_tag
+                    else f"records-{args.stage}.json")
+    records_path = FREEZE_DIR / records_name
+    print(f"[stage12] records file: {records_path.name}")
     records: list[dict] = []
     if records_path.exists():
         records = json.loads(records_path.read_text(encoding="utf-8"))
