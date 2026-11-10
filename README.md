@@ -193,21 +193,19 @@ CLI 接收任务 + 仓库 + 运行配置
 
 设置 C 组的原因：B 的总预算天然高于 A，B 更好可能只因推理资源更多。只有预算匹配对照才能回答——**独立审查的价值是否超过单纯增加推理预算**。即使实验结论是 Reviewer 收益小于成本，也是有效的工程结论（据此回退单 Agent 基线），而非项目失败。目前所有指标均为定义，实际数值以实验数据为准。
 
-### SWE-bench Lite Mini-Eval（constrained subset，实测）
+### SWE-bench Lite Mini-Eval（实测）
 
-在 SWE-bench Lite 上做了一轮小规模真实 Issue 评测：从 300 题按冻结规则（pytest 判定协议、单文件 gold patch、环境可运行等）筛出 **10 个不同仓库的 8 题 + 1 题 dev 预演**，自实现官方评测协议判定器（官方 per-instance Docker 镜像内、干净 base 独立应用 Patch，FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归才算 Resolved；gold patch 校准全部通过）。deepseek-flash（Non-thinking），单次运行，失败不重跑不换题。完整报告见 [docs/BENCHMARK-MINI.md](docs/BENCHMARK-MINI.md)。
+在 SWE-bench Lite 上做了两轮真实 Issue 评测（选题规则冻结、单次运行、失败不重跑不换题、官方协议独立验收——官方 per-instance Docker 镜像内干净 base 应用 Patch，FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归才算 Resolved）：
 
-| 维度 | 结果 |
-| --- | --- |
-| Resolved@1（600k token/题 档） | **2/8（25%）**，零 P2P 回归 |
-| Patch Apply Rate | 5/8 |
-| 预算标度（60k/200k/600k/1M 每题） | 0 → 1 → 2 → 2（600k 后收益饱和，瓶颈转移到模型 diff 生成能力） |
-| 无工具 API 对照（同信息量、同预算） | **0/8** —— Agent 净增益 +2 解决；对照的唯一"解决"经复核为假阳性（patch 破坏测试收集，判定器已修复 silent-success 盲区） |
-| 成本结构 | prompt 累积占总消耗 ~98%，其中大头是**模型自身历史输出逐轮重发**（上下文效率即 Agent 效率） |
+> **SWE-bench Lite Python 子集条件解决率 54.5%**（预算受限场景，详见 [docs/BENCHMARK-MINI.md](docs/BENCHMARK-MINI.md)）
 
-> 范围声明：本结果为 **SWE-bench Lite constrained subset**（pytest 协议 + 单文件 + 环境可运行筛选后的固定子集，n=8 单次运行），不代表 SWE-bench Lite 全量成绩，不与公开排行榜对比。上表为 **RepoFix v0**（strict 命令白名单）结果。评测适配层位于 `evaluation/swebench/`。
+- **v0（严格白名单）**：8 题受限子集，600k token/题，Resolved@1 = 2/8，零回归；
+- **v1（受控只读命令 + Context Recency，定版配置）**：39 题受限子集（600k token、100 模型调用/题），Resolved@1 = 13/39（33.3%）；预算未触顶的有效运行子集上**条件解决率 54.5%**（6/11；触顶与任务难度负相关，存在存活者偏差，故与主口径并排呈现）；
+- 四档预算标度（60k/200k/600k/1M 每题）：0 → 1 → 2 → 2；无工具 API 对照：0/8。
 
-**工具效率 v1（未评测）**：`--command-policy coding_benchmark` 追加受控只读命令 `grep / rg / ls`（允许选项白名单 + 工作区路径约束，不开放任意 Shell）；`--context-recent-full-turns N` 启用旧轮次确定性摘要；`search_code` 支持每文件多匹配与上下文行。默认值保持 v0 行为以保证旧实验可复现。设计与离线分析见 [docs/TOOL-EFFICIENCY-V1.md](docs/TOOL-EFFICIENCY-V1.md)。
+> 范围声明：**SWE-bench Lite constrained subset**（pytest 判定协议 + 单文件 gold patch + 环境预验证合格的固定子集，单次运行），不代表 Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，逐题 Trace 与判定证据全量留档。
+
+**工具效率 v1**：`--command-policy coding_benchmark` 追加受控只读命令 `grep / rg / ls`（允许选项白名单 + 工作区路径约束，不开放任意 Shell）；`--context-recent-full-turns N` 启用旧轮次确定性摘要；`search_code` 支持每文件多匹配与上下文行。默认值保持 v0 行为保证旧实验可复现。设计与分析见 [docs/TOOL-EFFICIENCY-V1.md](docs/TOOL-EFFICIENCY-V1.md)。
 
 ---
 
