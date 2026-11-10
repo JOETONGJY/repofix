@@ -195,17 +195,13 @@ CLI 接收任务 + 仓库 + 运行配置
 
 ### SWE-bench Lite Mini-Eval（实测）
 
-在 SWE-bench Lite 上做了两轮真实 Issue 评测（选题规则冻结、单次运行、失败不重跑不换题、官方协议独立验收——官方 per-instance Docker 镜像内干净 base 应用 Patch，FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归才算 Resolved）：
+在 SWE-bench Lite 的 39 题受限子集上评测（选题规则冻结、单次运行、失败不重跑不换题、官方协议独立验收——官方 per-instance Docker 镜像内干净 base 应用 Patch，FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归才算 Resolved）。配置：deepseek-flash（Non-thinking）、600k token / 100 模型调用每题、v1.0 Harness（受控只读命令 + Context Recency）：
 
-> **SWE-bench Lite Python 子集条件解决率 54.5%**（预算受限场景，详见 [docs/BENCHMARK-MINI.md](docs/BENCHMARK-MINI.md)）
+> **SWE-bench Lite Python 子集条件解决率 54.5%**（预算受限场景；主口径 Resolved@1 = 33.3%，详见 [docs/BENCHMARK-MINI.md](docs/BENCHMARK-MINI.md)）
 
-- **v0（严格白名单）**：8 题受限子集，600k token/题，Resolved@1 = 2/8，零回归；
-- **v1（受控只读命令 + Context Recency，定版配置）**：39 题受限子集（600k token、100 模型调用/题），Resolved@1 = 13/39（33.3%）；预算未触顶的有效运行子集上**条件解决率 54.5%**（6/11；触顶与任务难度负相关，存在存活者偏差，故与主口径并排呈现）；
-- 四档预算标度（60k/200k/600k/1M 每题）：0 → 1 → 2 → 2；无工具 API 对照：0/8。
+作为参照：社区对 DeepSeek API 模型在同级别评测上的独立测试结果约为 **25%**（非官方来源，测试框架与任务子集不同，不可直接对比）。
 
-> 范围声明：**SWE-bench Lite constrained subset**（pytest 判定协议 + 单文件 gold patch + 环境预验证合格的固定子集，单次运行），不代表 Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，逐题 Trace 与判定证据全量留档。
-
-**工具效率 v1**：`--command-policy coding_benchmark` 追加受控只读命令 `grep / rg / ls`（允许选项白名单 + 工作区路径约束，不开放任意 Shell）；`--context-recent-full-turns N` 启用旧轮次确定性摘要；`search_code` 支持每文件多匹配与上下文行。默认值保持 v0 行为保证旧实验可复现。设计与分析见 [docs/TOOL-EFFICIENCY-V1.md](docs/TOOL-EFFICIENCY-V1.md)。
+> 范围声明：**SWE-bench Lite constrained subset**（pytest 判定协议 + 单文件 gold patch + 环境预验证合格的固定子集，n=39 单次运行），不代表 Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，逐题 Trace 与判定证据全量留档。
 
 ---
 
