@@ -1,4 +1,4 @@
-"""SWE-bench Mini-Eval 报告生成：docs/BENCHMARK-MINI.md。
+"""SWE-bench Mini-Eval 汇总报告生成。
 
 输入全部来自落盘产物（可离线重生成）：
 - benchmarks/swebench-mini/selection.json      冻结名单 + 淘汰记录

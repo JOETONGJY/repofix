@@ -35,7 +35,7 @@ END_MARKER = ">>>>> End Test Output"
 
 @dataclass
 class JudgeRecord:
-    """一次判定的完整记录（写入 stage 报告与 BENCHMARK-MINI.md）。"""
+    """一次判定的完整记录（写入 stage 报告与评测汇总报告）。"""
 
     instance_id: str
     outcome: str = "INCONCLUSIVE"  # RESOLVED / FAILED / INCONCLUSIVE（默认未知，不冒充结论）

@@ -1,6 +1,6 @@
 """SWE-bench 工作区适配层：官方 per-instance 镜像 ↔ RepoFix Workspace 契约。
 
-设计要点（stage-0 验证过的假设，见 docs/BENCHMARK-MINI.md）：
+设计要点（stage-0 验证过的假设）：
 - 环境 = 官方实例镜像（数据集 image 字段），不使用 repofix-env——历史仓库的
   Python 版本与依赖只有官方镜像保证（可编辑安装指向 /testbed）。
 - 工作区提取：`docker create`（不启动）+ `docker cp /testbed/.` 到宿主目录。
