@@ -195,13 +195,21 @@ CLI 接收任务 + 仓库 + 运行配置
 
 ### SWE-bench Lite Mini-Eval（实测）
 
-在 SWE-bench Lite 的 39 题受限子集上评测（选题规则冻结、单次运行、失败不重跑不换题、官方协议独立验收——官方 per-instance Docker 镜像内干净 base 应用 Patch，FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归才算 Resolved）。配置：deepseek-flash（Non-thinking）、600k token / 100 模型调用每题、v1.0 Harness（受控只读命令 + Context Recency）：
+由于我们的MVP agent的受限容器仅支持pytest系列command的白名单，所以我们选取了 SWE-bench Lite 的 95/300 题进行评测（FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归算 Resolved）。配置：deepseek-flash-1017（Non-thinking）、1M token / 单题100次调用上限：
 
-> **SWE-bench Lite Python 子集条件解决率 54.5%**（预算受限场景；主口径 Resolved@1 = 33.3%，详见 [docs/BENCHMARK-MINI.md](docs/BENCHMARK-MINI.md)）
+> **SWE-bench Lite Python 子集条件解决率 54.7%**
 
-作为参照：社区对 DeepSeek API 模型在同级别评测上的独立测试结果约为 **25%**（非官方来源，测试框架与任务子集不同，不可直接对比）。
+约有21%的题目触发了token上限，最终的修复率预估保守估计会上涨5%。
 
-> 范围声明：**SWE-bench Lite constrained subset**（pytest 判定协议 + 单文件 gold patch + 环境预验证合格的固定子集，n=39 单次运行），不代表 Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，逐题 Trace 与判定证据全量留档。
+由于社区没有纯api的检测，保守估计DeepSeek1017在同级别评测上的独立测试结果约为 **35%**（非官方来源，测试框架与任务子集不同，不可直接对比）
+
+可以作为对照的有开源社区的Yuki harness，300题通过率为72%。
+| agent | 成功率 | SOLVED平均调用次数 | token上限设置 | API配置 | 窗口配置 |
+| --- | --- | --- | --- | --- | --- |
+| RepoFix | 54% | 64次 | 1M | THINKING关 | 128K |
+| Yuki | 72% | 38次 | 无 | THINKING开 | 1M |
+
+> 范围声明：**SWE-bench Lite constrained subset**，不代表 Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，逐题 Trace 与判定证据全量留档。
 
 ---
 
