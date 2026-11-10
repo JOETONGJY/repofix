@@ -87,9 +87,12 @@ def build_task_stack(
         raise RuntimeError(f"rg unavailable in derived image for {instance_id}")
     if installs:
         # 官方 install 步骤（环境准备）：Agent 自行运行测试需要包可导入；
-        # 禁网容器内 build isolation 失败时自动离线重试（依赖镜像已备齐）
+        # 禁网容器内 build isolation 失败时自动离线重试（依赖镜像已备齐）。
+        # 超时按命令超时上取整（重负载宿主上 900s 不够 matplotlib 的 install，
+        # v1-48 评测 4 题因此 INFRA——GPT 评审第七轮实证）
+        install_timeout = max(900, int(config.command_timeout_seconds) * 4)
         install_evidence = run_install_commands(
-            cli, container, installs,
+            cli, container, installs, timeout=install_timeout,
             env_prefix=f"SETUPTOOLS_SCM_PRETEND_VERSION={pkg_version} " if pkg_version else "")
         if not install_evidence["ok"]:
             cli.remove_container(container)
@@ -110,7 +113,7 @@ def build_task_stack(
     store = SQLiteEventStore(run_dir / "run.sqlite")
     api_key = _require_api_key()
     adapter = DeepSeekAdapter(
-        api_key=api_key, retry_limit=config.model_retry_limit, thinking="disabled",
+        api_key=api_key, retry_limit=config.model_retry_limit, thinking=config.thinking,
     )
     task_spec = TaskSpec(
         instruction=problem_statement,
@@ -136,7 +139,7 @@ def build_task_stack(
 
     def review_runner_factory(review_run_id: str):
         reviewer_adapter = DeepSeekAdapter(
-            api_key=api_key, retry_limit=config.model_retry_limit, thinking="disabled",
+            api_key=api_key, retry_limit=config.model_retry_limit, thinking=config.thinking,
         )
         reviewer_clock = SystemClock()
         reviewer_budget = BudgetTracker(config, reviewer_clock)

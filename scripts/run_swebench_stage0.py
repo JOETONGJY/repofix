@@ -251,12 +251,24 @@ def main() -> int:
     parser.add_argument("--only", nargs="*", default=None, help="restrict validation to these instance_ids")
     parser.add_argument("--refreeze", action="store_true",
                         help="skip validation; rebuild selection.json from the merged report")
+    parser.add_argument("--from-selection", default=None,
+                        help="validate a pre-frozen list (selection-40.json formal_40) instead of "
+                             "select_candidates output; freeze to the same path + '-validated' suffix")
     args = parser.parse_args()
 
     cache = DATA_ROOT / "dataset"
     test_rows = dataset.load_split("test", cache)
     dev_rows = dataset.load_split("dev", cache)
-    candidates = selection.select_candidates(test_rows, target=args.target)
+    if args.from_selection:
+        frozen = json.loads(Path(args.from_selection).read_text(encoding="utf-8"))
+        by_id = {m["instance_id"]: m for m in frozen["formal_40"]}
+        candidates = [by_id[r["instance_id"]] for r in test_rows if r["instance_id"] in by_id]
+        missing = set(by_id) - {c["instance_id"] for c in candidates}
+        if missing:
+            print(f"[stage0] ERROR: frozen instances not in test split: {missing}", file=sys.stderr)
+            return 2
+    else:
+        candidates = selection.select_candidates(test_rows, target=args.target)
     rehearsal_list = selection.select_candidates(dev_rows, target=3)
     if not candidates:
         print("[stage0] selection produced no candidates; aborting", file=sys.stderr)
@@ -271,7 +283,15 @@ def main() -> int:
 
     cli = DockerCli()
     # 报告合并：增量重验（--only）时保留已有实例的验证结果，仅覆盖本次条目
-    prior_path = FREEZE_DIR / "stage0-report.json"
+    # from-selection 模式：独立的报告与冻结文件（不覆盖 8 题 v1.0 的历史证据）
+    if args.from_selection:
+        sel_path = Path(args.from_selection)
+        report_path = sel_path.parent / (sel_path.stem + "-stage0-report.json")
+        freeze_path = sel_path.parent / (sel_path.stem + "-validated.json")
+    else:
+        report_path = FREEZE_DIR / "stage0-report.json"
+        freeze_path = FREEZE_DIR / "selection.json"
+    prior_path = report_path
     prior_instances = []
     if prior_path.exists():
         try:
@@ -308,8 +328,8 @@ def main() -> int:
         print(f"[stage0] -> {'ELIGIBLE' if evidence.get('ok') else 'ENVIRONMENT_BLOCKED'}\n")
         # 逐步落盘：中断也有证据
         report["finished_at"] = time.time()
-        FREEZE_DIR.mkdir(parents=True, exist_ok=True)
-        (FREEZE_DIR / "stage0-report.json").write_text(
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     eligible_formal = [m for m in candidates if _ok(report, m["instance_id"])]
@@ -321,7 +341,7 @@ def main() -> int:
         for m, tag in todo if not _ok(report, m["instance_id"])
     ]
     out = selection.write_selection_json(
-        FREEZE_DIR / "selection.json", eligible_formal, eligible_rehearsal, blocked,
+        freeze_path, eligible_formal, eligible_rehearsal, blocked,
         report["dataset_commit"])
     payload = json.loads(out.read_text(encoding="utf-8"))
     print("=" * 60)

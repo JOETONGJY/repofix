@@ -116,7 +116,7 @@ def run_control_task(
 ) -> dict:
     """运行单个对照任务。返回与 agent 记录同构的 record（runner 字段口径一致）。"""
     instance_id = instance_meta["instance_id"]
-    run_dir = Path(data_root) / "runs" / instance_id
+    run_dir = Path(data_root) / "runs-control" / instance_id
     run_dir.mkdir(parents=True, exist_ok=True)
     testbed = Path(data_root) / "control-testbeds" / instance_id
     testbed.parent.mkdir(parents=True, exist_ok=True)

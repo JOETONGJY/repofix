@@ -32,19 +32,29 @@ def main() -> int:
     parser.add_argument("--max-rounds", type=int, default=40)
     parser.add_argument("--max-total-tokens", type=int, default=600000)
     parser.add_argument("--timeout", type=int, default=3600)
+    parser.add_argument("--selection", default=None,
+                        help="冻结名单路径（默认 selection.json；48 题用 selection-48.json）")
+    parser.add_argument("--arm-tag", default=None,
+                        help="对照组标记：记录保存为 records-control-<tag>.json（防缓存复用）")
     args = parser.parse_args()
 
     probe = DockerCli().run(["version", "--format", "{{.Server.Version}}"], timeout=30)
     if probe.returncode != 0:
         raise SystemExit(f"[control] docker daemon unreachable: {probe.stderr.strip()[:120]}")
 
-    frozen = json.loads((FREEZE_DIR / "selection.json").read_text(encoding="utf-8"))
+    frozen_path = Path(args.selection) if args.selection else FREEZE_DIR / "selection.json"
+    frozen = json.loads(frozen_path.read_text(encoding="utf-8"))
     if not frozen.get("formal"):
         raise SystemExit("[control] no frozen formal instances")
-    report = json.loads((FREEZE_DIR / "stage0-report.json").read_text(encoding="utf-8"))
+    stage0_name = frozen_path.stem + "-stage0-report.json"
+    stage0_path = frozen_path.parent / stage0_name
+    report = json.loads(stage0_path.read_text(encoding="utf-8"))
 
     config = RunConfig(model_id="deepseek-flash", max_duration_seconds=args.timeout)
-    records_path = FREEZE_DIR / "records-control.json"
+    tag = args.arm_tag
+    records_name = f"records-control-{tag}.json" if tag else "records-control.json"
+    records_path = FREEZE_DIR / records_name
+    print(f"[control] records file: {records_name}")
     records: list[dict] = []
     if records_path.exists():
         records = json.loads(records_path.read_text(encoding="utf-8"))

@@ -80,6 +80,10 @@ class RunConfig(BaseModel):
     # 命令权限档位（工具效率 v1）：strict（v0 白名单）/ coding_benchmark（追加
     # 受控只读命令 grep/rg/ls）。任务启动时确定并写入 Trace，模型运行期不可修改。
     command_policy: str = "strict"
+    # 思考模式（v2 实验轴）：disabled（v0/v1 口径）/ enabled（深度推理）。
+    # DeepSeek API 为二值开关，无 effort 档位（reasoning_effort 参数被静默忽略，
+    # 2026-11-09 探测实证）。写入 Trace；不同取值的结果不可跨配置合并。
+    thinking: str = "disabled"
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
     review_enabled: bool = True
     max_reviewer_model_calls: int = Field(default=3, ge=1)

@@ -121,7 +121,7 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
     store = SQLiteEventStore(Path(config.output_dir) / "runs" / run_id / "run.sqlite")
     adapter = DeepSeekAdapter(
         api_key=api_key, retry_limit=config.model_retry_limit,
-        thinking="disabled",  # 显式关闭 Thinking Mode（评审 P1；与演练声明一致）
+        thinking=config.thinking,  # v0/v1 = disabled；v2 实验轴 = enabled
     )
     # LoopGuard 真实目标变化判定：工作区 patch_hash 变化 = 有进展（评审 P1 遗留接线）
     progress_state = {"last_hash": None}
@@ -145,7 +145,7 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         from repofix.runtime.review_runner import ReviewRunner
 
         reviewer_adapter = DeepSeekAdapter(
-            api_key=api_key, retry_limit=config.model_retry_limit, thinking="disabled",
+            api_key=api_key, retry_limit=config.model_retry_limit, thinking=config.thinking,
         )
         reviewer_clock = SystemClock()
         reviewer_budget = BudgetTracker(config, reviewer_clock)

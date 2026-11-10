@@ -98,6 +98,9 @@ class DeepSeekAdapter:
     def _build_payload(self, request: ModelRequest) -> dict:
         if not request.messages:
             raise ModelPermanentError("ModelRequest.messages must not be empty")
+        # DeepSeek 思考模式（2026-11-09 实证探测）：工具调用轮的历史里
+        # reasoning_content **必须回传**——缺失时 API 返回 400（"must be passed
+        # back to the API"）。ContextEngine 保留的续接字段在协议边界原样发送。
         payload: dict = {
             "model": request.model_id,
             "messages": [dict(message) for message in request.messages],

@@ -242,7 +242,7 @@ DERIVED_IMAGE_PREFIX = "repofix-swebenv"
 
 
 def run_install_commands(cli: DockerCli, container: str, installs: list[str],
-                         env_prefix: str = "") -> dict:
+                         env_prefix: str = "", timeout: int = 900) -> dict:
     """在容器内执行官方 eval_script 的 install 命令（环境准备，非泄漏）。
 
     官方容器有网络、我们的评测容器禁网：`pip install -e .` 的 build isolation
@@ -264,7 +264,7 @@ def run_install_commands(cli: DockerCli, container: str, installs: list[str],
         if result.returncode != 0:
             fallback = f"{command} --no-build-isolation --no-deps"
             retry = cli.run(["exec", "--workdir", SWEBENCH_MOUNT, container, "bash", "-c", fallback],
-                            timeout=900)
+                            timeout=timeout)
             record["fallback_rc"] = retry.returncode
             record["fallback_command"] = fallback
             record["tail"] = (retry.stdout + retry.stderr)[-300:]

@@ -68,6 +68,10 @@ def main() -> int:
                         help="RepoFix v1 起使用 coding_benchmark（受控只读命令）")
     parser.add_argument("--context-recent-full-turns", type=int, default=0,
                         help="Context 近期完整窗口（v1 建议 6；0 = 关闭 = v0 行为）")
+    parser.add_argument("--thinking", default="disabled", choices=("disabled", "enabled"),
+                        help="思考模式（v2 实验轴 = enabled；v0/v1 = disabled）")
+    parser.add_argument("--selection", default=None,
+                        help="冻结名单路径（默认 benchmarks/swebench-mini/selection.json）")
     parser.add_argument("--arm-tag", default=None,
                         help="实验组标记（如 tierA4-1M / v1-ab）：记录文件保存为 records-formal-<tag>.json，"
                              "避免不同版本对照混用同一 records 文件（缓存复用防护）")
@@ -76,7 +80,8 @@ def main() -> int:
     if not args.approve_tokens:
         parser.error("--approve-tokens is required before any model call (spending consent)")
 
-    frozen = _load_frozen()
+    frozen = (json.loads(Path(args.selection).read_text(encoding="utf-8"))
+              if args.selection else _load_frozen())
     if args.stage == "rehearsal":
         if not frozen.get("rehearsal"):
             raise SystemExit("[stage12] no eligible rehearsal instance in frozen selection")
@@ -115,6 +120,7 @@ def main() -> int:
         output_reserve_tokens=4096,
         command_policy=args.command_policy,
         context_recent_full_turns=args.context_recent_full_turns,
+        thinking=args.thinking,
         **config_kwargs,
     )
     print(f"[stage12] stage={args.stage} instances={[m['instance_id'] for m in instances]}")
@@ -134,7 +140,9 @@ def main() -> int:
     records: list[dict] = []
     if records_path.exists():
         records = json.loads(records_path.read_text(encoding="utf-8"))
-        done = {r["instance_id"] for r in records}
+        # 完成判定：有真实 token 消耗才算跑过——0-token INFRA_ERROR 是基础设施
+        # 故障不是任务结果，允许补跑（结果覆盖同实例旧记录）
+        done = {r["instance_id"] for r in records if r["agent"]["token_usage"]["total"] > 0}
         instances = [m for m in instances if m["instance_id"] not in done]
         if done:
             print(f"[stage12] resuming: {len(done)} already recorded (frozen protocol: no rerun)")
@@ -185,19 +193,24 @@ def main() -> int:
 
 
 def _frozen_plan(meta: dict) -> dict:
-    """冻结名单实例的可见计划来自 stage0-report.json（冻结时已评审）。"""
-    report_path = FREEZE_DIR / "stage0-report.json"
-    if not report_path.exists():
-        raise SystemExit("[stage12] stage0-report.json missing; cannot resolve frozen visible plan")
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    for entry in report["instances"]:
-        if entry["instance_id"] == meta["instance_id"]:
-            plan_data = entry.get("visible_plan", {})
-            if plan_data.get("plan_source") == "empty":
-                return {"plan_source": "empty", "argv": []}
-            return {"plan_source": plan_data.get("plan_source", "issue_scoped"),
-                    "argv": plan_data.get("argv", [])}
-    raise SystemExit(f"[stage12] instance not in stage0 report: {meta['instance_id']}")
+    """冻结名单实例的可见计划来自 stage0 报告（冻结时已评审）。
+
+    48 题合并名单的证据在两份报告里：既有 8 题在 stage0-report.json，
+    扩展 40 题在 selection-40-stage0-report.json——依次查找。
+    """
+    for name in ("stage0-report.json", "selection-40-stage0-report.json"):
+        report_path = FREEZE_DIR / name
+        if not report_path.exists():
+            continue
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        for entry in report["instances"]:
+            if entry["instance_id"] == meta["instance_id"]:
+                plan_data = entry.get("visible_plan", {})
+                if plan_data.get("plan_source") == "empty":
+                    return {"plan_source": "empty", "argv": []}
+                return {"plan_source": plan_data.get("plan_source", "issue_scoped"),
+                        "argv": plan_data.get("argv", [])}
+    raise SystemExit(f"[stage12] instance not in any stage0 report: {meta['instance_id']}")
 
 
 if __name__ == "__main__":

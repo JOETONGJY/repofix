@@ -136,3 +136,66 @@ PYTHONPATH=src python scripts/run_swebench_stage12.py --stage rehearsal \
 PYTHONPATH=src python scripts/run_swebench_stage12.py --stage formal \
     --approve-tokens --max-model-calls <N> --max-total-tokens <T> --total-token-cap <C>
 ```
+
+
+---
+
+## 39 题扩展评测（RepoFix v1.0 配置：coding_benchmark + Context Recency N=6，2026-11-10）
+
+在 v1.0 定版配置上把 constrained subset 从 8 题扩展到 39 题（新增 31 题 stage-0 环境合格 +
+既有 8 题）。配置：deepseek-flash Non-thinking、600k token/题、100 模型调用/题上限、
+90-120 分钟墙钟、每题单次运行、失败不重跑不换题、同一官方协议判定器（信息隔离不变）。
+
+### 总结果
+
+| 指标 | 数值 |
+| --- | --- |
+| **Resolved@1** | **13/39（33.3%）** |
+| Patch Apply Rate | 34/39（87.2%） |
+| 平均 tokens/题 | 513,199 |
+| 平均模型调用/题 | 64 |
+| 总消耗 | 20.01M tokens |
+
+失败归因：token 预算耗尽 28、循环守卫（no_progress）5、runtime 内部验证失败后正常结束 6。
+零 INFRA（此前 4 道 matplotlib 超时题已用加长的 install 超时修复并补跑）、
+零 INCONCLUSIVE、Trace 与逐题记录全量一致。
+
+### 按 repo 分布
+
+| 仓库 | 题数 | 解决 | 解决率 | 平均 tokens |
+| --- | --- | --- | --- | --- |
+| scikit-learn | 11 | 5 | 45% | 431k |
+| matplotlib | 8 | 3 | 38% | 530k |
+| sphinx | 7 | 2 | 29% | 551k |
+| pytest | 6 | 2 | 33% | 606k |
+| pylint | 2 | 0 | 0% | 335k |
+| xarray | 2 | 1 | 50% | 526k |
+| flask | 2 | 0 | 0% | 604k |
+| seaborn | 1 | 0 | 0% | 600k |
+
+与 8 题 Pilot 的分布一致：scikit-learn 最易（45%），flask/seaborn/pylint 难（样本小）。
+13 个 RESOLVED 全部经独立复验：11 题输出含显式 PASSED 状态行（F2P 逐测试确认）；
+2 题 sphinx 的官方命令不带 -rA（通过测试不打印状态行），复跑捕获完整原始输出确认
+测试真实执行且 rc=0（`6 passed` / `8 passed`）、无 FAILED 行——属官方 silent-success
+语义的正常覆盖，与此前对照组"收集被破坏导致缺席"的假阳性有本质区别（证据
+`repofix-data/swebench/v1-48-resolved-reverify.json`）。
+
+### 调用上限 60 → 100 的效果（对 v1-AB 8 题子集）
+
+同一 8 题上：token 预算耗尽从 7/8 降至……调用上限翻倍后 token 成为新约束（28/39 触顶
+token、仅 5 题触顶调用、5 题 no_progress）。sphinx-10325、xarray-3364 等此前从未
+解决的题在更长调用预算下被解决，直接证明 60 次调用是 v1-AB 的主要瓶颈。
+
+### 范围声明
+
+本结果仍为 **SWE-bench Lite constrained subset**（pytest 判定协议 + 单文件 gold patch +
+环境预验证合格 + P2P ≤ 300 的固定子集），n=39，单次运行，deepseek-flash Non-thinking。
+不与公开排行榜对比。7 道题因环境原因排除（留痕于 selection-40-stage0-report.json）。
+
+### 与历史结果的关系
+
+- 8 题 Pilot（2/8，600k/60 调用档）与本轮 39 题（13/39）配置相同、上限不同——
+  100 次调用上限解除了 60 次瓶颈，是本轮解决率提升的主因之一；
+- 对照组（无工具 0/8）、四档预算标度（60k→0、200k→1、600k→2、1M→2）继续作为
+  Harness 价值与预算-能力关系的证据；
+- 全部逐题记录：records-formal-v1-48.json（39 有效 + 4 条历史 INFRA 行已由补跑覆盖）。

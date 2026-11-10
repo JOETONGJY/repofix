@@ -331,7 +331,14 @@ class AgentRunner:
             return self._model_client.complete(request)
         except ModelProtocolError:
             raise  # 协议错误交由主循环做有限纠正（不能被通用 ModelClientError 吞掉）
-        except ModelClientError:
+        except ModelClientError as exc:
+            # 留痕：原先异常被吞掉，Trace 里只剩 model_client_error，无法区分 API
+            # 瞬时故障与永久错误（48 题评测中 2 题因此 0-token 失败且原因不可查）
+            self._append_event(
+                EventType.MODEL_RETRY,
+                {"reason": "model_client_error", "error_type": type(exc).__name__,
+                 "detail": str(exc)[:300], "step": self._step},
+            )
             return None
 
     # ---- finish / Final Verification ----
