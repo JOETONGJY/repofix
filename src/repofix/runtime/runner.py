@@ -76,6 +76,7 @@ class AgentRunner:
         preflight_summary: dict | None = None,
         repo_overview: str | None = None,
         repo_overview_meta: dict | None = None,
+        test_agent_note: str | None = None,
         target_unchanged: Callable[[ToolCall], bool] | None = None,
         review_runner_factory: Callable[[str], "object"] | None = None,
         reviewer_executor: object | None = None,
@@ -115,6 +116,8 @@ class AgentRunner:
         # MVP v0.4 功能 A：Repository Overview（None = 未启用/生成失败回退）
         self._repo_overview = repo_overview
         self._repo_overview_meta = repo_overview_meta
+        # MVP v0.4 功能 B（P2 评审）：Test Agent 复现摘要（非权威只读信号）
+        self._test_agent_note = test_agent_note
         # M4：Review Agent（review_enabled=True 时由 Runner 在 REVIEWING 阶段调度）
         self._review_runner_factory = review_runner_factory
         self._reviewer_executor = reviewer_executor
@@ -150,6 +153,8 @@ class AgentRunner:
             self._append_event(EventType.REPO_OVERVIEW_GENERATED, dict(self._repo_overview_meta))
         self._transition(RunStatus.RUNNING)
         self._context.start_task(self._task.instruction, self._task.base_commit)
+        if self._test_agent_note:
+            self._context.set_test_agent_note(self._test_agent_note)
         if self._repo_overview:
             self._context.set_repo_overview(self._repo_overview)
 

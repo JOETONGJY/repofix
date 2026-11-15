@@ -60,12 +60,17 @@ class StackExtras:
     test_agent: TestAgentRunner | None = None
 
 
-def _generate_repo_overview(task_dir: Path) -> tuple[str | None, dict]:
-    """生成 Repository Overview；失败记录原因并回退（None = 不注入）。"""
+def _generate_repo_overview(task_dir: Path,
+                            instruction: str = "") -> tuple[str | None, dict]:
+    """生成 Repository Overview；失败记录原因并回退（None = 不注入）。
+
+    instruction 传入 Issue 文本：Candidate files 按 Issue 关键词做路径与
+    文件名简单匹配（P2，评审：任务上下文必须真正参与候选排序）。
+    """
     from repofix.context.repo_overview import build_repo_overview, overview_fingerprint
 
     try:
-        text = build_repo_overview(Path(task_dir))
+        text = build_repo_overview(Path(task_dir), issue_text=instruction or "")
     except Exception as exc:  # noqa: BLE001 —— 概览生成失败不阻塞主流程
         return None, {"enabled": True, "ok": False, "chars": 0,
                       "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
@@ -155,9 +160,10 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
     # ---- MVP v0.4 功能 A：Repository Overview（可选；失败回退到无概览）----
     if config.repo_overview_enabled:
         extras.repo_overview_text, extras.repo_overview_meta = _generate_repo_overview(
-            workspace.task_dir)
+            workspace.task_dir, instruction=task_spec.instruction)
 
     # ---- MVP v0.4 功能 B：Test Agent 阶段 1（生成 + 基线复现；独立测试工作区）----
+    test_agent_note = None
     test_agent = None
     if config.test_agent_enabled:
         if should_trigger(config, report)[0]:
@@ -173,6 +179,8 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
             )
             test_agent.run_baseline(report, repo_overview=extras.repo_overview_text)
             extras.test_agent = test_agent
+            # P2（评审）：基线复现成功时，以只读非权威摘要提供给 Main
+            test_agent_note = test_agent.main_context_note()
 
     registry = ToolRegistry()
     register_default_tools(registry)
@@ -241,6 +249,7 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         },
         repo_overview=extras.repo_overview_text,
         repo_overview_meta=extras.repo_overview_meta or None,
+        test_agent_note=test_agent_note,
         target_unchanged=workspace_unchanged,
         review_runner_factory=review_runner_factory,
         reviewer_executor=workspace.read_only_executor(),

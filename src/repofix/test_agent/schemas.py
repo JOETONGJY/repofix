@@ -57,10 +57,14 @@ class TestAgentReport(BaseModel):
     test_file: str = ""
     artifact_test_file: str = "candidate_test.py"
     baseline_exit_code: int | None = None
+    baseline_failures: list[str] = Field(default_factory=list)  # 落在生成测试内的失败身份
     post_patch_exit_code: int | None = None
     post_patch_status: Literal["passed", "failed", "error", "not_run"] = "not_run"
     post_patch_detail: str = ""
     fail_to_pass: bool = False
+    # P1（评审补充验证可信度）：基线运行若污染了测试工作区的受跟踪文件，
+    # verify_post_patch 会先重建干净副本再应用 Patch，并在此标记
+    test_workspace_rebuilt: bool = False
     model_calls: int = 0
     token_usage: dict = Field(
         default_factory=lambda: {"prompt": None, "completion": None, "total": None}

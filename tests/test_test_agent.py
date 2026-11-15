@@ -41,6 +41,8 @@ from repofix.workspace.preflight import PreflightReport, PreflightRunner
 from tests.conftest import (
     FakeClock,
     FakeDockerCli,
+    FakeToolExecutor,
+    FakeVerifier,
     ScriptedModelClient,
     make_tool_call,
     model_response,
@@ -88,15 +90,22 @@ def bug_repo(tmp_path):
 
 
 class PytestScriptedCli(FakeDockerCli):
-    """探针命令返回成功；pytest 命令按脚本返回（隔离 Preflight 探针与测试执行）。"""
+    """探针命令返回成功；pytest 命令按脚本返回（隔离 Preflight 探针与测试执行）。
 
-    def __init__(self, pytest_results):
+    pytest_hook：pytest 执行瞬间触发（模拟容器内 bind-mount 副作用，
+    例如被执行的测试篡改工作区受跟踪文件）。
+    """
+
+    def __init__(self, pytest_results, pytest_hook=None):
         super().__init__()
         self.pytest_results = list(pytest_results)
+        self.pytest_hook = pytest_hook
 
     def exec(self, name, argv, timeout=120, cwd_in_container="/workspace") -> CliResult:
         if argv[:3] == ["python", "-m", "pytest"]:
             self.exec_calls.append((name, argv, cwd_in_container))
+            if self.pytest_hook:
+                self.pytest_hook(argv)
             item = self.pytest_results.pop(0)
             if isinstance(item, Exception):
                 raise item
@@ -346,9 +355,62 @@ class TestPostPatchVerification:
         runner.verify_post_patch(FIX_PATCH)
         assert runner.report.post_patch_status == "passed"
         assert runner.report.fail_to_pass is True
+        assert runner.report.test_workspace_rebuilt is False  # 干净基线无需重建
         # 真实 Patch 应用到测试工作区（不是复制源码）
         ws_calc = tmp_path / "workspaces" / f"{RUN_ID}-testagent" / "calc.py"
         assert "a + b" in ws_calc.read_text(encoding="utf-8")
+        runner.cleanup()
+
+    def test_baseline_side_effects_trigger_clean_rebuild(self, bug_repo, tmp_path):
+        """P1（评审）：基线 pytest 篡改工作区受跟踪文件 → 检出漂移 → 重建干净
+        副本再应用 Patch，补充验证始终针对预期基线。"""
+        ws_dir = tmp_path / "workspaces" / f"{RUN_ID}-testagent"
+        state = {"runs": 0}
+
+        def tamper_on_baseline_run(argv):
+            state["runs"] += 1
+            if state["runs"] == 1:  # 仅基线运行篡改（模拟一次性副作用）
+                (ws_dir / "calc.py").write_text("TAMPERED BY BASELINE TEST\n", encoding="utf-8")
+
+        runner, _ = make_runner(
+            bug_repo, tmp_path,
+            [generation_response()],
+            PytestScriptedCli(
+                [CliResult(1, "", BASELINE_FAILED_OUTPUT), CliResult(0, "", "")],
+                pytest_hook=tamper_on_baseline_run))
+        assert runner.run_baseline(empty_preflight()).status is ReproStatus.REPRODUCED
+        # 基线运行后工作区确已被污染
+        assert "TAMPERED" in (ws_dir / "calc.py").read_text(encoding="utf-8")
+        runner.verify_post_patch(FIX_PATCH)
+        assert runner.report.test_workspace_rebuilt is True
+        assert runner.report.post_patch_status == "passed"
+        assert runner.report.fail_to_pass is True
+        assert "rebuilt clean workspace" in runner.report.post_patch_detail
+        # 重建后的副本：篡改内容消失，只有原始代码 + 候选 Patch
+        content = (ws_dir / "calc.py").read_text(encoding="utf-8")
+        assert "TAMPERED" not in content
+        assert "a + b" in content
+        runner.cleanup()
+
+    def test_untracked_cache_not_counted_as_drift(self, bug_repo, tmp_path):
+        """pytest 缓存产物（__pycache__/.pytest_cache）不算漂移，不触发重建。"""
+        ws_dir = tmp_path / "workspaces" / f"{RUN_ID}-testagent"
+
+        def create_cache_artifacts(argv):
+            (ws_dir / "__pycache__").mkdir(exist_ok=True)
+            (ws_dir / "__pycache__" / "calc.cpython-311.pyc").write_bytes(b"x")
+            (ws_dir / ".pytest_cache").mkdir(exist_ok=True)
+
+        runner, _ = make_runner(
+            bug_repo, tmp_path,
+            [generation_response()],
+            PytestScriptedCli(
+                [CliResult(1, "", BASELINE_FAILED_OUTPUT), CliResult(0, "", "")],
+                pytest_hook=create_cache_artifacts))
+        runner.run_baseline(empty_preflight())
+        runner.verify_post_patch(FIX_PATCH)
+        assert runner.report.test_workspace_rebuilt is False
+        assert runner.report.post_patch_status == "passed"
         runner.cleanup()
 
     def test_post_patch_failed_when_still_reproduced(self, bug_repo, tmp_path):
@@ -394,6 +456,97 @@ class TestPostPatchVerification:
         runner.verify_post_patch("")
         assert runner.report.post_patch_status == "not_run"
         runner.cleanup()
+
+
+class TestMainContextNote:
+    """P2（评审）：成功复现的摘要以只读非权威信号提供给 Main。"""
+
+    def test_note_built_on_reproduced(self, bug_repo, tmp_path):
+        runner, _ = make_runner(
+            bug_repo, tmp_path,
+            [generation_response()],
+            PytestScriptedCli([CliResult(1, "", BASELINE_FAILED_OUTPUT)]))
+        assert runner.run_baseline(empty_preflight()).status is ReproStatus.REPRODUCED
+        note = runner.main_context_note()
+        assert note is not None
+        assert "non-authoritative" in note
+        assert "NOT part of the final verification" in note
+        assert "NOT in your task workspace" in note
+        assert "tests/test_repofix_generated.py::test_add_two_numbers" in note
+        assert runner.report.baseline_failures == [
+            "tests/test_repofix_generated.py::test_add_two_numbers"]
+        runner.cleanup()
+
+    def test_no_note_when_not_reproduced(self, bug_repo, tmp_path):
+        runner, _ = make_runner(
+            bug_repo, tmp_path,
+            [generation_response()],
+            PytestScriptedCli([CliResult(0, "", "")]))
+        runner.run_baseline(empty_preflight())
+        assert runner.main_context_note() is None
+        assert runner.report.baseline_failures == []
+        runner.cleanup()
+
+    def test_note_injected_into_main_first_request(self, bug_repo, tmp_path):
+        """注入位置：Task 之后、Repository Overview 之前；未复现则不注入。"""
+        from repofix.context.builder import ContextBuilder
+        from repofix.context.repo_overview import build_repo_overview
+
+        runner, _ = make_runner(
+            bug_repo, tmp_path,
+            [generation_response()],
+            PytestScriptedCli([CliResult(1, "", BASELINE_FAILED_OUTPUT)]))
+        runner.run_baseline(empty_preflight())
+        note = runner.main_context_note()
+        builder = ContextBuilder("SYSTEM RULES")
+        builder.start_task("Fix the add bug")
+        builder.set_test_agent_note(note)
+        builder.set_repo_overview(build_repo_overview(bug_repo))
+        contents = [m.get("content") or "" for m in builder.next_messages()]
+        task_idx = next(i for i, c in enumerate(contents) if "Fix the add bug" in c)
+        note_idx = next(i for i, c in enumerate(contents) if "non-authoritative" in c)
+        ovw_idx = next(i for i, c in enumerate(contents) if "Repository Overview" in c)
+        assert task_idx < note_idx < ovw_idx
+
+    def test_runner_plumbs_note_into_first_model_request(self):
+        from repofix.contracts import RunConfig, TaskSpec
+        from repofix.runtime.runner import AgentRunner
+        from repofix.tools.dispatcher import ToolDispatcher
+        from repofix.tools.registry import ToolRegistry, register_default_tools
+        from tests.test_repo_overview import passed_report
+
+        store = SQLiteEventStore(":memory:")
+        registry = ToolRegistry()
+        register_default_tools(registry)
+        client = ScriptedModelClient([model_response(
+            "d1", [make_tool_call("f1", "finish", summary="done")])])
+        runner = AgentRunner(
+            run_id="run_note", task=TaskSpec(instruction="Fix it", repo_path="./r",
+                                             base_commit="abc"),
+            config=RunConfig(model_id="m", review_enabled=False),
+            model_client=client, registry=registry,
+            dispatcher=ToolDispatcher(registry, FakeToolExecutor()),
+            store=store, verifier=FakeVerifier([passed_report()]), clock=FakeClock(),
+            test_agent_note="[Supplementary Signal — non-authoritative] hint",
+        )
+        runner.run()
+        contents = [m.get("content") or "" for m in client.requests[0].messages]
+        assert any("non-authoritative" in c for c in contents)
+        # 不传 note（默认 None）→ 不注入
+        store2 = SQLiteEventStore(":memory:")
+        client2 = ScriptedModelClient([model_response(
+            "d1", [make_tool_call("f1", "finish", summary="done")])])
+        runner2 = AgentRunner(
+            run_id="run_note2", task=TaskSpec(instruction="Fix it", repo_path="./r",
+                                              base_commit="abc"),
+            config=RunConfig(model_id="m", review_enabled=False),
+            model_client=client2,
+            registry=registry, dispatcher=ToolDispatcher(registry, FakeToolExecutor()),
+            store=store2, verifier=FakeVerifier([passed_report()]), clock=FakeClock(),
+        )
+        runner2.run()
+        assert all("non-authoritative" not in str(m.get("content"))
+                   for req in client2.requests for m in req.messages)
 
 
 class TestAuthoritativeSemanticsUnchanged:
@@ -452,7 +605,8 @@ class TestCliIntegration:
                 from repofix.cli import _generate_repo_overview
 
                 extras.repo_overview_text, extras.repo_overview_meta = \
-                    _generate_repo_overview(handle.task_dir)
+                    _generate_repo_overview(handle.task_dir,
+                                            instruction=task_spec.instruction)
             verifier = WorkspaceVerifier(
                 workspace, report.test_plan, report.baseline,
                 timeout_seconds=config.command_timeout_seconds,
@@ -467,6 +621,8 @@ class TestCliIntegration:
                 patch_hash_provider=lambda: workspace.get_changes()["patch_hash"],
                 repo_overview=extras.repo_overview_text,
                 repo_overview_meta=extras.repo_overview_meta or None,
+                test_agent_note=(extras.test_agent.main_context_note()
+                                 if extras.test_agent is not None else None),
             )
             return runner, store, workspace, manager, handle, report, extras
 
@@ -505,6 +661,8 @@ class TestCliIntegration:
         trajectory = (run_dir / "trajectory.jsonl").read_text(encoding="utf-8")
         assert "test_agent_started" in trajectory
         assert "test_agent_finished" in trajectory
+        # P2：复现摘要已提供给 Main（Trace 记录 note 字符数 > 0）
+        assert "main_context_note_chars" in trajectory
         # 测试工作区副本随主流程清理（无 -testagent 残留）
         ws_dirs = [p.name for p in (tmp_path / "data" / "workspaces").iterdir()]
         assert not any(name.endswith("-testagent") for name in ws_dirs)

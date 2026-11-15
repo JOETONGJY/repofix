@@ -177,12 +177,22 @@ class TestAgentRunner:
         self._workspace: DockerWorkspace | None = None
         self._candidate_source: str | None = None
         self._last_exit_code: int | None = None
+        self._context_note: str | None = None
         self.report = TestAgentReport(enabled=True)
 
     @property
     def candidate_source(self) -> str | None:
         """通过校验并已注入的候选测试源码（未生成成功时为 None）。"""
         return self._candidate_source
+
+    def main_context_note(self) -> str | None:
+        """给 Main Agent 的只读复现摘要（P2，评审）。
+
+        仅在基线 REPRODUCED 时非 None：以明确的非权威声明注入 Main 初始
+        Context（模型不可修改 harness 注入的 head 内容）；测试未复现时
+        不注入（对定位 Bug 无信号价值）。
+        """
+        return self._context_note
 
     # ---- 阶段 1：生成 + 基线复现（Main Agent 之前）----
 
@@ -218,8 +228,29 @@ class TestAgentRunner:
             "violations": self.report.violations,
             "test_file": self.report.test_file,
             "baseline_exit_code": self.report.baseline_exit_code,
+            "main_context_note_chars": len(self._context_note) if self._context_note else 0,
         })
         return self.report
+
+    def _build_context_note(self) -> str:
+        """非权威复现摘要（P2）：只读事实 + 明确的边界声明，供 Main 定位 Bug。"""
+        lines = [
+            "[Supplementary Signal — Test Agent reproduction (non-authoritative)]",
+            "A Test-Agent-generated reproduction test failed on the original buggy code:",
+        ]
+        if self.report.baseline_failures:
+            for failure in self.report.baseline_failures[:5]:
+                lines.append(f"  - {failure[:160]}")
+        else:
+            lines.append(f"  - {GENERATED_TEST_PATH} (baseline exit code "
+                         f"{self.report.baseline_exit_code})")
+        lines.extend([
+            "This file lives in a separate verification workspace: it is NOT in your task "
+            "workspace, you cannot see or modify it, and it is NOT part of the final "
+            "verification (the Final Verifier's outcome does not depend on it). "
+            "Treat this failure as a hint for locating the bug.",
+        ])
+        return "\n".join(lines)
 
     def _run_baseline_inner(self, repo_overview: str | None) -> None:
         # 独立测试工作区：同一 base_commit 的第二次 Clone（Main Workspace 不受影响）
@@ -273,18 +304,26 @@ class TestAgentRunner:
 
         self._candidate_source = candidate.test_source
         self._inject_candidate(handle.task_dir)
-        status, detail = self._run_generated_test(
+        status, detail, output = self._run_generated_test(
             call_id="testagent-baseline", timeout_seconds=300)
         self.report.status = status
         self.report.status_detail = detail
         self.report.baseline_exit_code = self._last_exit_code
+        if status is ReproStatus.REPRODUCED:
+            self.report.baseline_failures = [
+                f for f in parse_pytest_failures(output)
+                if f.split("::")[0] == GENERATED_TEST_PATH
+            ]
+            self._context_note = self._build_context_note()
 
     # ---- 阶段 2：修复后补充验证（Fail-to-Pass；Main Agent 完成后由 CLI 调用）----
 
     def verify_post_patch(self, patch_text: str) -> None:
         """把最终候选 Patch 应用到隔离测试副本，再次运行生成测试。
 
-        只在基线已 REPRODUCED 且 Patch 非空时有意义；结果只写入本报告，
+        应用前核对测试副本状态（P1，评审）：基线 pytest 运行在可写挂载的
+        工作区里，生成测试可能修改受跟踪的生产文件——此时重建干净副本再
+        应用 Patch，保证补充验证始终针对预期基线。结果只写入本报告，
         不影响 Final Verifier 的权威结论。
         """
         report = self.report
@@ -298,19 +337,33 @@ class TestAgentRunner:
             report.post_patch_detail = "empty candidate patch; post-patch check skipped"
             self._append_event(EventType.TEST_AGENT_FINISHED, self._post_patch_event_payload())
             return
+        drift = self._workspace_drift()
+        if drift:
+            rebuild_error = self._rebuild_clean_test_workspace(drift)
+            if rebuild_error:
+                report.post_patch_status = "error"
+                report.post_patch_detail = (
+                    f"workspace drift detected ({'; '.join(d[:80] for d in drift[:3])}); "
+                    f"clean rebuild failed: {rebuild_error[:200]}"
+                )
+                self._append_event(EventType.TEST_AGENT_FINISHED, self._post_patch_event_payload())
+                return
+            report.test_workspace_rebuilt = True
         apply_error = self._apply_patch_to_test_workspace(patch_text)
         if apply_error:
             report.post_patch_status = "error"
             report.post_patch_detail = f"patch apply failed: {apply_error[:300]}"
             self._append_event(EventType.TEST_AGENT_FINISHED, self._post_patch_event_payload())
             return
-        status, detail = self._run_generated_test(
+        status, detail, _output = self._run_generated_test(
             call_id="testagent-post-patch", timeout_seconds=300)
         report.post_patch_exit_code = self._last_exit_code
         if status is ReproStatus.NOT_REPRODUCED:
             # 基线失败 → 修复后通过：干净的 Fail-to-Pass 信号
             report.post_patch_status = "passed"
             report.post_patch_detail = "generated test passed after applying the candidate patch"
+            if report.test_workspace_rebuilt:
+                report.post_patch_detail += " (on a rebuilt clean workspace)"
             report.fail_to_pass = True
         elif status is ReproStatus.REPRODUCED:
             report.post_patch_status = "failed"
@@ -329,6 +382,7 @@ class TestAgentRunner:
             "post_patch_status": self.report.post_patch_status,
             "post_patch_exit_code": self.report.post_patch_exit_code,
             "fail_to_pass": self.report.fail_to_pass,
+            "test_workspace_rebuilt": self.report.test_workspace_rebuilt,
             "detail": self.report.post_patch_detail[:300],
             "authoritative_verification": self.report.authoritative_verification,
         }
@@ -354,8 +408,11 @@ class TestAgentRunner:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(self._candidate_source or "", encoding="utf-8", newline="\n")
 
-    def _run_generated_test(self, call_id: str, timeout_seconds: int) -> tuple[ReproStatus, str]:
-        """在测试工作区容器内运行生成测试（命令经现有命令策略白名单校验）。"""
+    def _run_generated_test(self, call_id: str, timeout_seconds: int) -> tuple[ReproStatus, str, str]:
+        """在测试工作区容器内运行生成测试（命令经现有命令策略白名单校验）。
+
+        返回 (复现状态, 说明, 合并输出)——输出供基线失败身份解析使用。
+        """
         assert self._workspace is not None
         argv = ["python", "-m", "pytest", "-q", GENERATED_TEST_PATH]
         self._last_exit_code = None
@@ -363,10 +420,94 @@ class TestAgentRunner:
             outcome = self._workspace.run_command(
                 argv, cwd=".", timeout_seconds=timeout_seconds, call_id=call_id)
         except Exception:  # noqa: BLE001 —— ExecutorCrashError/DockerCliError 都按环境问题
-            return ReproStatus.ENVIRONMENT_ERROR, "generated test execution failed (infrastructure)"
+            return (ReproStatus.ENVIRONMENT_ERROR,
+                    "generated test execution failed (infrastructure)", "")
         self._last_exit_code = outcome.exit_code
         output = outcome.content or ""
-        return classify_reproduction(outcome.exit_code, output, GENERATED_TEST_PATH)
+        status, detail = classify_reproduction(outcome.exit_code, output, GENERATED_TEST_PATH)
+        return status, detail, output
+
+    # ---- P1：基线副作用防护（评审）----
+
+    # pytest 运行自身产生的未跟踪缓存不算工作区漂移（与 _DIFF_EXCLUDES/
+    # LIST_FILES_PRUNE_DIRS 同口径；.hypothesis 为 pytest 插件常见产物）
+    _CACHE_SEGMENTS = frozenset({
+        "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        ".tox", ".nox", ".hypothesis",
+    })
+    _CACHE_SUFFIXES = (".pyc", ".pyo", ".coverage")
+
+    def _is_cache_artifact(self, path: str) -> bool:
+        parts = path.replace("\\", "/").split("/")
+        if any(segment in self._CACHE_SEGMENTS for segment in parts):
+            return True
+        name = parts[-1]
+        return name.endswith(self._CACHE_SUFFIXES) or name == ".coverage"
+
+    def _workspace_drift(self) -> list[str]:
+        """测试工作区相对 base_commit 的非预期变化（P1）。
+
+        预期状态：受跟踪文件全部与 base_commit 一致；未跟踪只允许注入的
+        生成测试文件与 pytest 缓存产物。返回漂移条目列表（空 = 干净）。
+        """
+        assert self._handle is not None
+        try:
+            # -uall：未跟踪目录展开为文件级条目（否则全新 tests/ 会折叠成 "?? tests/"，
+            # 无法与注入的生成测试路径精确匹配）
+            status = self._git_out(["status", "--porcelain", "-uall"], self._handle.task_dir)
+            head = self._git_out(["rev-parse", "HEAD"], self._handle.task_dir).strip()
+        except Exception as exc:  # noqa: BLE001 —— 状态不可确认 → 视为漂移（保守重建）
+            return [f"workspace state unreadable: {type(exc).__name__}: {str(exc)[:120]}"]
+        drift: list[str] = []
+        if self._handle.base_commit and head != self._handle.base_commit:
+            drift.append(f"HEAD drifted: {head[:12]} != {self._handle.base_commit[:12]}")
+        for line in status.splitlines():
+            line = line.rstrip()
+            if not line.strip():
+                continue
+            marker, path = line[:2], line[3:].strip()
+            if marker.strip() == "??":
+                path = path.split(" -> ")[-1]
+                if path == GENERATED_TEST_PATH or self._is_cache_artifact(path):
+                    continue
+            drift.append(line)
+        return drift
+
+    def _rebuild_clean_test_workspace(self, drift: list[str]) -> str:
+        """基线运行污染了工作区 → 重建干净测试副本并重新注入候选测试。
+
+        返回错误描述；空串 = 重建成功。重建后容器与副本与首次创建同规格。
+        """
+        try:
+            self.cleanup(keep_for_diagnosis=False)
+            handle = self._manager.prepare(f"{self._run_id}-testagent",
+                                           Path(self._task.repo_path), self._task.base_commit)
+            self._handle = handle
+            workspace = DockerWorkspace(
+                handle.task_dir, f"{self._run_id}-testagent", base_commit=handle.base_commit,
+                cli=self._cli, command_timeout_seconds=self._config.command_timeout_seconds,
+            )
+            workspace.initialize(self._image)
+            self._workspace = workspace
+            self._inject_candidate(handle.task_dir)
+            remaining = self._workspace_drift()
+            if remaining:
+                return f"rebuilt workspace still dirty: {'; '.join(remaining[:3])}"
+            return ""
+        except Exception as exc:  # noqa: BLE001 —— 重建失败如实上报，不伪装通过
+            return f"{type(exc).__name__}: {str(exc)[:200]}"
+
+    def _git_out(self, args: list[str], cwd: Path) -> str:
+        proc = subprocess.run(
+            ["git", *args], cwd=str(cwd), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"git {' '.join(args[:2])} failed rc={proc.returncode}: "
+                f"{(proc.stderr or proc.stdout).strip()[:200]}"
+            )
+        return proc.stdout or ""
 
     def _apply_patch_to_test_workspace(self, patch_text: str) -> str:
         """git apply 候选 Patch 到测试工作区副本。返回错误描述；空串 = 成功。

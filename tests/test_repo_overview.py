@@ -262,6 +262,19 @@ class TestCliOverviewAssembly:
         assert meta["chars"] == len(text)
         assert "Repository Overview" in text
 
+    def test_instruction_flows_into_candidate_ranking(self, tmp_path):
+        """P2（评审）：task instruction 必须真正参与候选文件排序。"""
+        root = make_repo(tmp_path, {
+            "src/services/order.py": "def create_order():\n    pass\n",
+            "src/services/cart.py": "def cart():\n    pass\n",
+        })
+        text, meta = _generate_repo_overview(
+            root, instruction="Order creation fails when the total is computed")
+        assert meta["ok"] is True
+        candidates = text.split("Candidate files:")[1].split("Notes:")[0]
+        first = [line.strip() for line in candidates.strip().splitlines() if line.strip()][0]
+        assert first == "src/services/order.py"
+
     def test_generate_repo_overview_failure_falls_back(self, tmp_path):
         text, meta = _generate_repo_overview(tmp_path / "no-such-dir")
         assert text is None

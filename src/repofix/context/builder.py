@@ -197,6 +197,9 @@ class ContextBuilder:
         # 以独立 user 消息插入 Task 与 Working Memory 之间，不进 System Rules；
         # 经 head 计入 Context Token Budget（CX 预算检查对象包含全部 head 消息）。
         self._repo_overview: str | None = None
+        # Test Agent 复现摘要（MVP v0.4 功能 B，P2 评审）：harness 生成的只读
+        # 事实信号，插入 Task 之后、Overview 之前；模型不可改写 head 内容。
+        self._test_agent_note: str | None = None
         self._entries: list[tuple[str, object]] = []  # ("turn", _Turn) | ("note", dict)
         self._last_read_hashes: dict[str, str | None] = {}
         self._current_hashes: dict[str, str | None] = {}
@@ -219,6 +222,14 @@ class ContextBuilder:
         位于 head（固定保留区），与 Task 同级。
         """
         self._repo_overview = text
+
+    def set_test_agent_note(self, text: str) -> None:
+        """注入 Test Agent 复现摘要（只读、非权威，P2 评审）。
+
+        harness 生成的一次性事实信号：文本自带「不在你的工作区、不属于最终
+        验证」边界声明。与 Overview 同样位于 head 固定保留区、计入预算。
+        """
+        self._test_agent_note = text
 
     # ---- 记录接口 ----
 
@@ -283,6 +294,8 @@ class ContextBuilder:
         head: list[dict] = [{"role": "system", "content": self._system_rules}]
         if self._task is not None:
             head.append(dict(self._task))
+        if self._test_agent_note:
+            head.append({"role": "user", "content": self._test_agent_note})
         if self._repo_overview:
             head.append({"role": "user", "content": self._repo_overview})
         if working_state is not None:
