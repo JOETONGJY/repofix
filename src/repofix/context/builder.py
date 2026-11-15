@@ -193,6 +193,10 @@ class ContextBuilder:
         self._task: dict | None = None
         self._task_goal = ""
         self._base_commit = ""
+        # Repository Overview（MVP v0.4 功能 A）：低信任仓库事实资料——
+        # 以独立 user 消息插入 Task 与 Working Memory 之间，不进 System Rules；
+        # 经 head 计入 Context Token Budget（CX 预算检查对象包含全部 head 消息）。
+        self._repo_overview: str | None = None
         self._entries: list[tuple[str, object]] = []  # ("turn", _Turn) | ("note", dict)
         self._last_read_hashes: dict[str, str | None] = {}
         self._current_hashes: dict[str, str | None] = {}
@@ -206,6 +210,15 @@ class ContextBuilder:
         self._task = {"role": "user", "content": instruction}
         self._task_goal = instruction
         self._base_commit = base_commit
+
+    def set_repo_overview(self, text: str) -> None:
+        """注入 Repository Overview（base_commit 初始状态的一次性概览）。
+
+        信任边界：概览派生自仓库文件，属低信任资料——以独立 user 消息呈现，
+        不覆盖/修改 System Rules；裁剪与预算策略照常作用于后续轮次，本消息
+        位于 head（固定保留区），与 Task 同级。
+        """
+        self._repo_overview = text
 
     # ---- 记录接口 ----
 
@@ -270,6 +283,8 @@ class ContextBuilder:
         head: list[dict] = [{"role": "system", "content": self._system_rules}]
         if self._task is not None:
             head.append(dict(self._task))
+        if self._repo_overview:
+            head.append({"role": "user", "content": self._repo_overview})
         if working_state is not None:
             head.append(
                 {

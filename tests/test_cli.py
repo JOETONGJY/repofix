@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from repofix.cli import app
+from repofix.cli import StackExtras, app
 from repofix.contracts import (
     PatchStatus,
     TestStatus,
@@ -62,7 +62,7 @@ def build_real_fake_stack(sample_repo, tmp_path, task_spec, config, run_id,
         dispatcher=ToolDispatcher(registry, workspace),  # 真实工作区即 ToolExecutor
         store=store, verifier=verifier, clock=FakeClock(),
     )
-    return runner, store, workspace, manager, handle, report
+    return runner, store, workspace, manager, handle, report, StackExtras()
 
 class DockerWorkspace_proxy:
     """FakeDockerCli 驱动的真实 DockerWorkspace（文件操作真实、容器假）。"""
@@ -218,6 +218,7 @@ class TestExitCodeMatrix:
                 InterruptingRunner(), store, _FakeWorkspace(), _DummyManager(), None,
                 type("R", (), {"ok": True, "test_plan": [], "test_plan_source": "manual",
                             "test_plan_evidence": "", "baseline": {}})(),
+                StackExtras(),
             ),
         )
         result = cli_runner.invoke(app, base_args(sample_repo, tmp_path / "data2"))

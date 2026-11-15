@@ -15,6 +15,7 @@ def _fake_stack_factory(captured: dict | None = None):
     from repofix.contracts import RunConfig, TaskSpec
 
     def fake_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
+        from repofix.cli import StackExtras
         from repofix.runtime.runner import AgentRunner
         from repofix.state import SQLiteEventStore
         from repofix.tools.dispatcher import ToolDispatcher
@@ -31,6 +32,8 @@ def _fake_stack_factory(captured: dict | None = None):
         if captured is not None:
             captured["review_enabled"] = config.review_enabled
             captured["output_dir"] = config.output_dir
+            captured["repo_overview_enabled"] = config.repo_overview_enabled
+            captured["test_agent_enabled"] = config.test_agent_enabled
 
         manager = WorkspaceManager(Path(config.output_dir) / "workspaces")
         handle = manager.prepare(run_id, Path(task_spec.repo_path), task_spec.base_commit)
@@ -88,7 +91,7 @@ def _fake_stack_factory(captured: dict | None = None):
             review_runner_factory=lambda rid: ScriptedReviewRunner(),
             reviewer_executor=FakeToolExecutor(),
         )
-        return runner, store, workspace, manager, handle, preflight_report
+        return runner, store, workspace, manager, handle, preflight_report, StackExtras()
 
     return fake_stack
 
@@ -174,6 +177,23 @@ class TestRunWithFakeStack:
                 break
             time.sleep(0.1)
         assert captured.get("review_enabled") is True
+
+    def test_v04_flags_pass_through(self, sample_repo, tmp_path, monkeypatch):
+        """MVP v0.4：repo_overview / test_agent 开关从请求体传入 RunConfig。"""
+        captured: dict = {}
+        client = self._install(monkeypatch, captured)
+        resp = client.post("/api/runs", json={
+            "repo": str(sample_repo), "task": "Fix",
+            "repo_overview": True, "test_agent": True,
+            "output_dir": str(tmp_path / "d"),
+        })
+        assert resp.status_code == 200
+        for _ in range(50):
+            if captured.get("repo_overview_enabled") is not None:
+                break
+            time.sleep(0.1)
+        assert captured.get("repo_overview_enabled") is True
+        assert captured.get("test_agent_enabled") is True
 
     def test_error_run_surfaces(self, sample_repo, tmp_path, monkeypatch):
         """栈内异常 → run.status=error，前端可见（不静默）。"""

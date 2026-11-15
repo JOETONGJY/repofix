@@ -20,6 +20,7 @@ from repofix.cli import (
     InputValidationError,
     PreflightFailure,
     _build_stack,
+    _post_patch_test_verification,
     _read_task,
     _validate_repo,
     _write_artifacts,
@@ -75,6 +76,9 @@ class StartRequest(BaseModel):
     max_tool_calls: int = Field(default=100, ge=1)
     timeout: int = Field(default=600, ge=1)
     review: bool = False
+    # MVP v0.4：与 CLI 相同的新能力开关（默认关闭，旧基线可复现）
+    repo_overview: bool = False
+    test_agent: bool = False
 
 
 _RUN_RETENTION_SECONDS = 600  # Run 结束后保留轻量元数据 10 分钟，随后释放重资源
@@ -118,7 +122,7 @@ def _finish_run(run: RunHandle, result, artifacts_dir: str = "") -> None:
 def _run_worker(run: RunHandle, task_spec, config) -> None:
     """后台执行 Agent Run；异常一律落到 run.status=error（前端可见）。"""
     try:
-        runner, store, workspace, manager, handle, _preflight = _build_stack(
+        runner, store, workspace, manager, handle, _preflight, extras = _build_stack(
             task_spec, config, run.run_id)
         run.store = store
         run.workspace = workspace
@@ -126,8 +130,10 @@ def _run_worker(run: RunHandle, task_spec, config) -> None:
         run.handle = handle
         try:
             result = runner.run()
+            # MVP v0.4 功能 B 阶段 2：修复后补充验证（失败只入报告，不影响主结果）
+            _post_patch_test_verification(extras, workspace, result)
             run_dir, delivery_error = _write_artifacts(
-                Path(config.output_dir), run.run_id, store, workspace, result)
+                Path(config.output_dir), run.run_id, store, workspace, result, extras=extras)
             _finish_run(run, result, str(run_dir))
             if delivery_error:
                 run.error = delivery_error
@@ -145,6 +151,9 @@ def _run_worker(run: RunHandle, task_spec, config) -> None:
             finally:
                 manager.cleanup_workspace(
                     handle, keep_for_diagnosis=(run.status != "completed"))
+                if extras.test_agent is not None:
+                    extras.test_agent.cleanup(
+                        keep_for_diagnosis=(run.status != "completed"))
     except (InputValidationError, PreflightFailure, DirtyWorkspaceError,
             WorkspaceError) as exc:
         run.error = str(exc)
@@ -175,6 +184,8 @@ def start_run(body: StartRequest):
         max_duration_seconds=body.timeout,
         review_enabled=body.review,
         output_dir=body.output_dir,
+        repo_overview_enabled=body.repo_overview,  # MVP v0.4 功能 A
+        test_agent_enabled=body.test_agent,  # MVP v0.4 功能 B
         # 与 CLI 一致：Context Budget 生产启用（未知模型 resolve 返回 None 不虚构容量）
         context_window_tokens=resolve_context_window(body.model),
     )

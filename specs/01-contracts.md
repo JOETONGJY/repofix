@@ -89,6 +89,10 @@ class EventType(str, Enum):
     CONTEXT_COMPACTED = "context_compacted"    # 附压缩前后 Token 估算
     NO_PROGRESS_WARNING = "no_progress_warning"
     CONTEXT_BUDGET_EXCEEDED = "context_budget_exceeded"
+    # —— MVP v0.4 新增（Repository Overview / Test Agent；启用相应功能时才出现）——
+    REPO_OVERVIEW_GENERATED = "repo_overview_generated"  # payload: enabled/ok/chars/sha256/error
+    TEST_AGENT_STARTED = "test_agent_started"            # Test Agent 触发开始（actor=TEST_AGENT）
+    TEST_AGENT_FINISHED = "test_agent_finished"          # 附生成与复现结果摘要（分 phase）
 ```
 
 ## 核心模型（Pydantic）
@@ -129,6 +133,10 @@ class RunConfig(BaseModel):
     max_reviewer_model_calls: int = 3
     max_reviewer_tool_calls: int = 8          # 只读工具调用
     review_fix_model_calls: int = 3           # 审查反馈后 Main 的修正模型调用上限
+    # —— Repository Overview / Test Agent（MVP v0.4；默认均关闭，旧基线可复现）——
+    repo_overview_enabled: bool = False       # 启用确定性仓库概览注入（功能 A）
+    test_agent_enabled: bool = False          # 无可用测试时启用一次性测试生成（功能 B）
+    test_agent_max_model_calls: int = 1       # Test Agent 真实 API 请求尝试上限（模型错误重试关闭）
     # —— 保留扩展（MVP 未实现）——
     # approval_mode: "interactive" | "deny"   # MVP 恒为 deny 语义：越权直接拒绝
     output_dir: str = "./repofix-data"     # 运行数据根目录（CLI --output-dir 可覆盖）
@@ -304,10 +312,11 @@ class ReviewReport(BaseModel):
     summary: str = ""
 
 class AgentActor(str, Enum):
-    """事件归属：区分 Main Agent / Review Agent / 系统（design/02）。"""
+    """事件归属：区分 Main Agent / Review Agent / Test Agent / 系统（design/02）。"""
     MAIN = "main"
     REVIEWER = "reviewer"
     SYSTEM = "system"
+    TEST_AGENT = "test_agent"   # MVP v0.4：Test Agent 的模型调用与事件归属（不与 Main 混记）
 
 
 class AgentEvent(BaseModel):

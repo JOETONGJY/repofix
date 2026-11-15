@@ -89,6 +89,12 @@ class RunConfig(BaseModel):
     max_reviewer_model_calls: int = Field(default=3, ge=1)
     max_reviewer_tool_calls: int = Field(default=8, ge=1)
     review_fix_model_calls: int = Field(default=3, ge=1)
+    # —— Repository Overview（MVP v0.4 功能 A；默认关闭保证旧实验可复现）——
+    repo_overview_enabled: bool = False
+    # —— Test Agent（MVP v0.4 功能 B；默认关闭。一次性生成：模型错误重试关闭，
+    #    真实 API 请求尝试不超过 test_agent_max_model_calls）——
+    test_agent_enabled: bool = False
+    test_agent_max_model_calls: int = Field(default=1, ge=1)
     # —— 保留扩展（MVP 未实现）：approval_mode 恒为 deny 语义：越权直接拒绝 ——
     output_dir: str = "./repofix-data"
 

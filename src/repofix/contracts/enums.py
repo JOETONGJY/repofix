@@ -96,14 +96,19 @@ class EventType(str, Enum):
     CONTEXT_COMPACTED = "context_compacted"
     NO_PROGRESS_WARNING = "no_progress_warning"
     CONTEXT_BUDGET_EXCEEDED = "context_budget_exceeded"
+    # —— MVP v0.4 新增（Repository Overview / Test Agent；启用相应功能时才出现）——
+    REPO_OVERVIEW_GENERATED = "repo_overview_generated"  # payload: enabled/ok/chars/sha256/error
+    TEST_AGENT_STARTED = "test_agent_started"  # Test Agent 触发开始（actor=TEST_AGENT）
+    TEST_AGENT_FINISHED = "test_agent_finished"  # 附生成与复现结果摘要（分 phase）
 
 
 class AgentActor(str, Enum):
-    """事件归属：区分 Main Agent / Review Agent / 系统。"""
+    """事件归属：区分 Main Agent / Review Agent / Test Agent / 系统。"""
 
     MAIN = "main"
     REVIEWER = "reviewer"
     SYSTEM = "system"
+    TEST_AGENT = "test_agent"  # MVP v0.4：Test Agent 的模型调用与事件归属（不与 Main 混记）
 
 
 class PatchStatus(str, Enum):

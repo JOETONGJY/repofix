@@ -10,6 +10,7 @@ Context 构造与状态转换（G2 控制权集中）。
 import json
 import os
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +26,7 @@ from repofix.gateway.adapter import DeepSeekAdapter, resolve_context_window
 from repofix.runtime.loop_guard import BudgetTracker, SystemClock
 from repofix.runtime.runner import AgentRunner
 from repofix.state import SQLiteEventStore
+from repofix.test_agent.runner import TestAgentRunner, should_trigger
 from repofix.tools.dispatcher import ToolDispatcher
 from repofix.tools.registry import ToolRegistry, register_default_tools
 from repofix.verifier.workspace_verifier import WorkspaceVerifier
@@ -32,7 +34,7 @@ from repofix.workspace.docker_cli import DockerCli
 from repofix.workspace.docker_workspace import DockerWorkspace
 from repofix.workspace.errors import DirtyWorkspaceError, WorkspaceError
 from repofix.workspace.manager import WorkspaceManager
-from repofix.workspace.preflight import PreflightRunner
+from repofix.workspace.preflight import DEFAULT_IMAGE, PreflightRunner
 
 app = typer.Typer(add_completion=False, help="RepoFix: Repository-Aware Coding Agent Harness")
 
@@ -43,6 +45,36 @@ def _root() -> None:
 
 
 DEFAULT_MODEL = "deepseek-flash"
+
+
+@dataclass
+class StackExtras:
+    """_build_stack 组装期产出的新功能附加对象（MVP v0.4）。
+
+    与 Preflight 解耦：Overview 文本与 TestAgentRunner 由 CLI/Server 在
+    主循环前后使用（artifact 导出 / Fail-to-Pass 补充验证 / 清理）。
+    """
+
+    repo_overview_text: str | None = None
+    repo_overview_meta: dict = field(default_factory=dict)
+    test_agent: TestAgentRunner | None = None
+
+
+def _generate_repo_overview(task_dir: Path) -> tuple[str | None, dict]:
+    """生成 Repository Overview；失败记录原因并回退（None = 不注入）。"""
+    from repofix.context.repo_overview import build_repo_overview, overview_fingerprint
+
+    try:
+        text = build_repo_overview(Path(task_dir))
+    except Exception as exc:  # noqa: BLE001 —— 概览生成失败不阻塞主流程
+        return None, {"enabled": True, "ok": False, "chars": 0,
+                      "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    return text, {
+        "enabled": True,
+        "ok": True,
+        "chars": len(text),
+        "sha256": overview_fingerprint(text),
+    }
 
 
 class InputValidationError(Exception):
@@ -93,7 +125,12 @@ def _validate_repo(repo: Path, base_ref: str) -> str:
 
 
 def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
-    """组装完整执行栈（测试经 monkeypatch 本函数注入 Scripted/Fake 组件）。"""
+    """组装完整执行栈（测试经 monkeypatch 本函数注入 Scripted/Fake 组件）。
+
+    MVP v0.4：Preflight 通过后依次执行 Repository Overview 生成（可选）与
+    Test Agent 生成+基线复现（可选、仅在无可用测试时触发）；两者失败均
+    安全降级，不阻塞主流程。
+    """
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         raise InputValidationError("DEEPSEEK_API_KEY is not set; cannot start a model-backed run")
@@ -112,13 +149,37 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         manager.cleanup_workspace(handle)
         raise PreflightFailure(report.failure_step or "unknown", report.failure_reason)
 
+    store = SQLiteEventStore(Path(config.output_dir) / "runs" / run_id / "run.sqlite")
+    extras = StackExtras()
+
+    # ---- MVP v0.4 功能 A：Repository Overview（可选；失败回退到无概览）----
+    if config.repo_overview_enabled:
+        extras.repo_overview_text, extras.repo_overview_meta = _generate_repo_overview(
+            workspace.task_dir)
+
+    # ---- MVP v0.4 功能 B：Test Agent 阶段 1（生成 + 基线复现；独立测试工作区）----
+    test_agent = None
+    if config.test_agent_enabled:
+        if should_trigger(config, report)[0]:
+            test_agent = TestAgentRunner(
+                run_id=run_id, task=task_spec, config=config,
+                # 独立 Adapter：模型错误不重试（retry_limit=0）→ 真实请求 ≤ 上限
+                model_client=DeepSeekAdapter(
+                    api_key=api_key, retry_limit=0, thinking=config.thinking,
+                ),
+                store=store,
+                workspaces_root=Path(config.output_dir) / "workspaces",
+                image=DEFAULT_IMAGE,
+            )
+            test_agent.run_baseline(report, repo_overview=extras.repo_overview_text)
+            extras.test_agent = test_agent
+
     registry = ToolRegistry()
     register_default_tools(registry)
     verifier = WorkspaceVerifier(
         workspace, report.test_plan, report.baseline,
         timeout_seconds=config.command_timeout_seconds,
     )
-    store = SQLiteEventStore(Path(config.output_dir) / "runs" / run_id / "run.sqlite")
     adapter = DeepSeekAdapter(
         api_key=api_key, retry_limit=config.model_retry_limit,
         thinking=config.thinking,  # v0/v1 = disabled；v2 实验轴 = enabled
@@ -178,17 +239,20 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
             "test_plan_evidence": report.test_plan_evidence,
             "baseline_kind": report.baseline.get("kind"),
         },
+        repo_overview=extras.repo_overview_text,
+        repo_overview_meta=extras.repo_overview_meta or None,
         target_unchanged=workspace_unchanged,
         review_runner_factory=review_runner_factory,
         reviewer_executor=workspace.read_only_executor(),
     )
     # 每次真实 API 尝试（含 Gateway 内部重试）原子检查并占用预算（评审 P0-2）
     adapter.on_attempt = runner.budget.reserve_model_attempt
-    return runner, store, workspace, manager, handle, report
+    return runner, store, workspace, manager, handle, report, extras
 
 
 def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result,
-                     test_report_extra: dict | None = None) -> tuple[Path, str | None]:
+                     test_report_extra: dict | None = None,
+                     extras: "StackExtras | None" = None) -> tuple[Path, str | None]:
     delivery_error: str | None = None
     run_dir = Path(output_dir) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -213,10 +277,37 @@ def _write_artifacts(output_dir: Path, run_id: str, store, workspace, result,
         report_payload["test_plan_source"] = test_report_extra.get("test_plan_source", "none")
         report_payload["test_plan_evidence"] = test_report_extra.get("test_plan_evidence", "")
         report_payload["baseline_kind"] = test_report_extra.get("baseline_kind", "")
+    if extras is not None and extras.repo_overview_meta:
+        report_payload["repo_overview"] = {
+            "enabled": True,
+            "ok": bool(extras.repo_overview_meta.get("ok")),
+            "chars": extras.repo_overview_meta.get("chars", 0),
+        }
+    if extras is not None and extras.test_agent is not None:
+        report_payload["test_agent"] = {
+            "triggered": bool(extras.test_agent.report.triggered),
+            "status": extras.test_agent.report.status.value,
+            "fail_to_pass": extras.test_agent.report.fail_to_pass,
+            "authoritative_verification": extras.test_agent.report.authoritative_verification,
+        }
     (run_dir / "test-report.json").write_text(
         json.dumps(report_payload, ensure_ascii=False, indent=2),
         encoding="utf-8", newline="\n",
     )
+    # —— MVP v0.4 新产物：repository-overview.txt 与 test-agent/ ——
+    if extras is not None and extras.repo_overview_text is not None:
+        (run_dir / "repository-overview.txt").write_text(
+            extras.repo_overview_text, encoding="utf-8", newline="\n")
+    if extras is not None and extras.test_agent is not None:
+        ta_report = extras.test_agent.report
+        ta_dir = run_dir / "test-agent"
+        ta_dir.mkdir(parents=True, exist_ok=True)
+        (ta_dir / "report.json").write_text(
+            ta_report.model_dump_json(indent=2), encoding="utf-8", newline="\n")
+        candidate_source = extras.test_agent.candidate_source
+        if candidate_source:
+            (ta_dir / ta_report.artifact_test_file).write_text(
+                candidate_source, encoding="utf-8", newline="\n")
     return run_dir, delivery_error
 
 
@@ -226,6 +317,30 @@ def _exit_code_for(result) -> int:
     if result.runtime_status is RunStatus.BUDGET_EXCEEDED:
         return 4
     return 3  # FAILED / CANCELLED：不可恢复错误
+
+
+def _post_patch_test_verification(extras: "StackExtras | None", workspace, result) -> None:
+    """MVP v0.4 功能 B 阶段 2：基线复现成功时，把最终候选 Patch 应用到隔离测试
+    副本并复跑生成测试（Fail-to-Pass 补充验证）。
+
+    只读主工作区的 Patch 文本（真实候选 Patch，不复制源码）；任何失败都记录进
+    Test Agent 报告，不抛出、不影响 RunResult / 退出码 / Verifier 语义。
+    """
+    if extras is None or extras.test_agent is None:
+        return
+    patch_text = ""
+    if result.runtime_status is RunStatus.COMPLETED:
+        try:
+            patch_text = workspace.get_changes_patch()
+        except WorkspaceError:
+            patch_text = ""
+    try:
+        extras.test_agent.verify_post_patch(patch_text)
+    except Exception as exc:  # noqa: BLE001 —— 补充验证失败只记录，不阻塞产物导出
+        extras.test_agent.report.post_patch_status = "error"
+        extras.test_agent.report.post_patch_detail = (
+            f"post-patch verification crashed: {type(exc).__name__}: {str(exc)[:200]}"
+        )
 
 
 def run(
@@ -251,6 +366,12 @@ def run(
     context_recent_full_turns: int = typer.Option(0, "--context-recent-full-turns", min=0,
                                                   help="Context 近期完整窗口：最近 N 轮保留完整"
                                                        "工具输出，更早轮次确定性摘要；0 = 关闭（v0）"),
+    repo_overview: bool = typer.Option(False, "--repo-overview/--no-repo-overview",
+                                       help="启用确定性 Repository Overview 注入"
+                                            "（MVP v0.4；默认关闭保证旧基线可复现）"),
+    test_agent: bool = typer.Option(False, "--test-agent/--no-test-agent",
+                                    help="无可用测试时启用一次性 Bug 复现测试生成"
+                                         "（MVP v0.4；默认关闭保证旧基线可复现）"),
 ) -> None:
     """一次性任务执行：输入任务 → 自主修复 → 输出 Patch / Trace / 报告。"""
     try:
@@ -272,6 +393,8 @@ def run(
         output_dir=str(output_dir),
         command_policy=command_policy,
         context_recent_full_turns=context_recent_full_turns,
+        repo_overview_enabled=repo_overview,  # MVP v0.4 功能 A（默认关闭）
+        test_agent_enabled=test_agent,  # MVP v0.4 功能 B（默认关闭）
         # Context Budget 生产启用（评审 P0-1）：已验证模型的窗口来自 profile；未知模型不虚构容量
         context_window_tokens=resolve_context_window(model),
     )
@@ -282,7 +405,8 @@ def run(
     run_id = f"run_{uuid.uuid4().hex[:12]}"
 
     try:
-        runner, store, workspace, manager, handle, preflight = _build_stack(task_spec, config, run_id)
+        runner, store, workspace, manager, handle, preflight, extras = _build_stack(
+            task_spec, config, run_id)
     except PreflightFailure as exc:
         typer.echo(f"[preflight failed] {exc}", err=True)
         raise typer.Exit(3)
@@ -310,6 +434,9 @@ def run(
             model_calls=0, tool_calls=0, token_usage={}, duration_ms=0,
         )
 
+    # MVP v0.4 功能 B 阶段 2：修复后补充验证（Fail-to-Pass；失败不影响主结论）
+    _post_patch_test_verification(extras, workspace, result)
+
     test_report_extra = {
         "test_plan": preflight.test_plan,
         "test_plan_source": preflight.test_plan_source,
@@ -317,8 +444,9 @@ def run(
         "baseline_kind": preflight.baseline.get("kind", "") if isinstance(preflight.baseline, dict) else "",
     }
     run_dir, delivery_error = _write_artifacts(
-        output_dir, run_id, store, workspace, result, test_report_extra=test_report_extra)
-    # 清理顺序（评审 P1）：先停容器（进程树），再清理副本目录
+        output_dir, run_id, store, workspace, result,
+        test_report_extra=test_report_extra, extras=extras)
+    # 清理顺序（评审 P1）：先停容器（进程树），再清理副本目录；Test Agent 同纪律
     try:
         workspace.close()
     except Exception:  # noqa: BLE001 —— 清理失败不改变退出码
@@ -327,9 +455,15 @@ def run(
         manager.cleanup_workspace(handle, keep_for_diagnosis=(
             result.runtime_status is not RunStatus.COMPLETED or interrupted
         ))
+        if extras.test_agent is not None:
+            extras.test_agent.cleanup(keep_for_diagnosis=(
+                result.runtime_status is not RunStatus.COMPLETED or interrupted))
 
     typer.echo(f"  status: {result.runtime_status.value}  verification: {result.verification_status.value}")
     typer.echo(f"  modified: {len(result.modified_files)} file(s)  model calls: {result.model_calls}")
+    if extras.test_agent is not None and extras.test_agent.report.triggered:
+        typer.echo(f"  test agent: {extras.test_agent.report.status.value}  "
+                   f"post-patch: {extras.test_agent.report.post_patch_status}")
     typer.echo(f"  artifacts: {run_dir}")
     if result.termination_reason:
         typer.echo(f"  termination: {result.termination_reason}")

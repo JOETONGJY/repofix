@@ -74,6 +74,8 @@ class AgentRunner:
         system_rules: str = DEFAULT_SYSTEM_RULES,
         patch_hash_provider: Callable[[], str] | None = None,
         preflight_summary: dict | None = None,
+        repo_overview: str | None = None,
+        repo_overview_meta: dict | None = None,
         target_unchanged: Callable[[ToolCall], bool] | None = None,
         review_runner_factory: Callable[[str], "object"] | None = None,
         reviewer_executor: object | None = None,
@@ -110,6 +112,9 @@ class AgentRunner:
         )
         self._patch_hash_provider = patch_hash_provider
         self._preflight_summary = preflight_summary
+        # MVP v0.4 功能 A：Repository Overview（None = 未启用/生成失败回退）
+        self._repo_overview = repo_overview
+        self._repo_overview_meta = repo_overview_meta
         # M4：Review Agent（review_enabled=True 时由 Runner 在 REVIEWING 阶段调度）
         self._review_runner_factory = review_runner_factory
         self._reviewer_executor = reviewer_executor
@@ -140,8 +145,13 @@ class AgentRunner:
         # 此处只记录传入的真实摘要，不再发 M1 占位事件（评审遗留清理）
         if self._preflight_summary is not None:
             self._append_event(EventType.PREFLIGHT_COMPLETED, dict(self._preflight_summary))
+        # Repository Overview 生成结果入 Trace（CLI 组装期生成；失败时 ok=False + error 原因）
+        if self._repo_overview_meta is not None:
+            self._append_event(EventType.REPO_OVERVIEW_GENERATED, dict(self._repo_overview_meta))
         self._transition(RunStatus.RUNNING)
         self._context.start_task(self._task.instruction, self._task.base_commit)
+        if self._repo_overview:
+            self._context.set_repo_overview(self._repo_overview)
 
         protocol_retry_used = False
         while True:
