@@ -109,9 +109,12 @@ class TaskSpec(BaseModel):
     # 注：task_id 不放入 TaskSpec；脏工作区由 CLI 直接拒绝（design/01）
 
 class RunConfig(BaseModel):
-    """描述「怎么跑」。任务启动后固定，模型不得修改。默认值为 v1.1 校准值
-    （2026-11-15，39 题实证：自然消耗 64 调用/513k token；deepseek-flash 实际
-    支持 1M 窗口且有前缀缓存——历史运行以显式参数与 Trace 记录保持可复现）。"""
+    """描述「怎么跑」。任务启动后固定，模型不得修改。默认值为 v1.2 校准值
+    （2026-11-15，SWE-bench Lite 39 题 v1 配置实证，参数—证据口径：
+    64 调用 = 全体均值（含 28 题 token 触顶截断）；38 调用 = 未触顶 11 题
+    自然收敛均值；max_model_calls=50 = 上限取两者之间，覆盖自然收敛且
+    保留难题余量。deepseek-flash 支持 1M 窗口且有前缀缓存——历史运行以
+    显式参数与 Trace 记录保持可复现）。"""
     model_id: str
     prompt_version: str = "v0"
     # —— 预算（任一触顶即 BUDGET_EXCEEDED）——

@@ -137,6 +137,8 @@ def build_task_stack(
             return False
         return True
 
+    # v1.1 统一台账：Reviewer 用量计入 max_total_tokens（评测与 CLI 同口径）
+    run_usage_sink: dict = {"reviewer_tokens": 0}
     def review_runner_factory(review_run_id: str):
         reviewer_adapter = DeepSeekAdapter(
             api_key=api_key, retry_limit=config.model_retry_limit, thinking=config.thinking,
@@ -148,6 +150,7 @@ def build_task_stack(
             run_id=review_run_id, config=config, model_client=reviewer_adapter,
             registry=registry, workspace_executor=workspace.read_only_executor(),
             store=store, clock=reviewer_clock, global_tool_budget=runner.budget,
+            usage_sink=run_usage_sink,
         )
 
     runner = AgentRunner(
@@ -161,6 +164,9 @@ def build_task_stack(
         review_runner_factory=review_runner_factory if config.review_enabled else None,
     )
     adapter.on_attempt = runner.budget.reserve_model_attempt
+    # v1.1 统一台账：max_total_tokens 按 Main+Reviewer 合计检查（review_enabled=False
+    # 时 sink 恒为 0，行为不变）
+    runner.budget.external_tokens_fn = lambda: int(run_usage_sink.get("reviewer_tokens") or 0)
     return runner, store, workspace, cli, container, agent_image
 
 

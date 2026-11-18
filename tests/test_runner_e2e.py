@@ -3,6 +3,7 @@
 真实 Runtime 执行全流程；Fake 仅提供外部能力（模型脚本 / 工具结果 / 验证报告），
 不生成 Trace / RunResult。全部测试不访问外部模型 API、不启动 Docker。
 """
+
 import json
 
 from repofix.contracts import (
@@ -113,9 +114,20 @@ class TestVerticalSlice:
         assert rows["c2"]["side_effect_status"] == "succeeded"
         assert rows["f1"]["tool_name"] == "finish"  # 控制动作也有 Trace
 
-        # 事件序列完整（specs/02 单 Turn 标准序列）
+        # 事件序列完整（specs/02 单 Turn 标准序列）——
+        # 0658430 后的修复中被误删、按原样恢复（评审 P2：事件顺序回归无单测不可接受）
         event_types = [event.type for event in store.get_events(RUN_ID)]
         assert event_types[0] is EventType.RUN_STARTED
+        assert event_types.count(EventType.MODEL_REQUESTED) == 3
+        assert event_types.count(EventType.MODEL_RESPONDED) == 3
+        assert event_types.count(EventType.TOOL_FINISHED) == 4  # 3 个工具 + 1 个控制动作
+        assert event_types.count(EventType.VERIFICATION_FINISHED) == 1
+        assert event_types[-1] is EventType.RUN_FINISHED
+
+        # trajectory.jsonl 导出可解析且与 SQLite 条数一致
+        trajectory = store.export_trajectory(RUN_ID)
+        lines = [json.loads(line) for line in trajectory.strip().splitlines()]
+        assert len(lines) == len(store.get_events(RUN_ID))
 
     def test_cached_tokens_accumulated_and_exposed(self, registry, config):
         """v1.1：usage.prompt_tokens_details.cached_tokens 聚合进 RunResult，
@@ -415,3 +427,35 @@ class TestExecutorCrashSideEffectUnknown:
         # 剩余调用不执行
         assert rows["c3"]["side_effect_status"] == "skipped"
         assert [name for name, _ in executor.calls] == ["read_file", "apply_patch"]
+
+
+class TestUpstreamUsageNoneSafe:
+    def test_none_valued_upstream_does_not_crash(self, registry, config):
+        """P0 回归：Test Agent 在 usage 不完整时上报 None 值（"未知不伪造零"语义），
+        cost_report 不得因此崩溃——total 只统计 Main/Reviewer，未知按 0 计。"""
+        responses = [
+            model_response(
+                "d1",
+                [make_tool_call("c1", "apply_patch", path="auth.py", patch="--- a\n+++ b")],
+                usage={"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105},
+            ),
+            model_response("d2", [make_tool_call("f1", "finish", summary="done")]),
+        ]
+        runner = AgentRunner(
+            run_id="run_none_upstream", task=TaskSpec(**TASK_ARGS), config=config,
+            model_client=ScriptedModelClient(responses), registry=registry,
+            dispatcher=ToolDispatcher(registry, FakeToolExecutor()),
+            store=SQLiteEventStore(":memory:"),
+            verifier=FakeVerifier([passed_report()]),
+            clock=FakeClock(),
+            patch_hash_provider=lambda: "1" * 64,
+            upstream_token_usage={"prompt": None, "completion": None, "total": None},
+        )
+        result = runner.run()
+
+        assert result.runtime_status is RunStatus.COMPLETED
+        cr = result.cost_report
+        # 展示层保留 None（"未知"语义，不伪造为零）；合计按 0 计
+        assert cr["test_agent"]["total"] is None
+        assert cr["main"]["total"] == 105
+        assert cr["total_tokens"] == 105

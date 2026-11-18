@@ -67,7 +67,7 @@ class TestAgentReport(BaseModel):
     test_workspace_rebuilt: bool = False
     model_calls: int = 0
     token_usage: dict = Field(
-        default_factory=lambda: {"prompt": None, "completion": None, "total": None}
+        default_factory=lambda: {"prompt": None, "completion": None, "total": None, "cached_tokens": None}
     )
     generation_duration_ms: int | None = None
     violations: list[str] = Field(default_factory=list)

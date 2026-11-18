@@ -617,7 +617,11 @@ class AgentRunner:
         test_agent = dict(self._upstream_token_usage or {})
 
         def _t(d: dict) -> int:
-            return int(d.get("total", 0))
+            # P0 修复（评审）：.get("total", 0) 只防键缺失不防值为 None——
+            # Test Agent 在 usage 不完整时会上报 {"total": None}（schema 刻意的
+            # "未知不伪造"语义），int(None) 会让整个 Run 在收尾阶段崩溃、产物不落盘
+            value = d.get("total")
+            return int(value) if isinstance(value, (int, float)) else 0
 
         total_tokens = _t(main) + _t(reviewer) + _t(test_agent)
         prices = self._config

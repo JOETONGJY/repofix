@@ -275,11 +275,15 @@ class TestAgentRunner:
         self.report.model_calls = result.model_calls
         self.report.generation_duration_ms = result.duration_ms
         if result.usage:
-            # Token 用量只来自 Gateway 返回值；字段缺失保持 None（未知），不伪造为零
+            # Token 用量只来自 Gateway 返回值；字段缺失保持 None（未知），不伪造为零。
+            # cached_tokens（v1.1 成本报告契约）：缺字段时保持 None——"未知"与
+            # "零缓存"是两件事，cost_report 估算时按 0 计但展示未知
+            details = result.usage.get("prompt_tokens_details")
             self.report.token_usage = {
                 "prompt": result.usage.get("prompt_tokens"),
                 "completion": result.usage.get("completion_tokens"),
                 "total": result.usage.get("total_tokens"),
+                "cached_tokens": details.get("cached_tokens") if isinstance(details, dict) else None,
             }
         if result.error:
             self.report.status = ReproStatus.GENERATION_FAILED

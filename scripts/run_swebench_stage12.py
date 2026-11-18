@@ -66,8 +66,8 @@ def main() -> int:
     parser.add_argument("--keep-testbeds", action="store_true")
     parser.add_argument("--command-policy", default="strict", choices=("strict", "coding_benchmark"),
                         help="RepoFix v1 起使用 coding_benchmark（受控只读命令）")
-    parser.add_argument("--context-recent-full-turns", type=int, default=30,
-                        help="Context 近期完整窗口（v1 建议 6；0 = 关闭 = v0 行为）")
+    parser.add_argument("--context-recent-full-turns", type=int, default=10,
+                        help="Context 近期完整窗口（v1.2 默认 10；0 = 关闭 = v0 行为）")
     parser.add_argument("--thinking", default="disabled", choices=("disabled", "enabled"),
                         help="思考模式（v2 实验轴 = enabled；v0/v1 = disabled）")
     parser.add_argument("--selection", default=None,
@@ -116,8 +116,10 @@ def main() -> int:
         max_duration_seconds=args.timeout,
         command_timeout_seconds=args.command_timeout,
         review_enabled=False,  # Stage 1/2 单 Agent 基线（Stage 3 另行批准）
-        context_window_tokens=131072,
-        output_reserve_tokens=4096,
+        # v1.1 起与产品默认一致（deepseek-flash 实证 1M；4096 输出预留曾触发
+        # finish_reason=length 拒绝）；历史评测（≤v1-48）使用 128K/4096，口径见各报告
+        context_window_tokens=1048576,
+        output_reserve_tokens=8192,
         command_policy=args.command_policy,
         context_recent_full_turns=args.context_recent_full_turns,
         thinking=args.thinking,

@@ -23,7 +23,7 @@ from repofix.contracts import (
     VerificationStatus,
 )
 from repofix.gateway.adapter import DeepSeekAdapter, resolve_context_window
-from repofix.runtime.loop_guard import BudgetTracker, SystemClock
+from repofix.runtime.loop_guard import SystemClock
 from repofix.runtime.runner import AgentRunner
 from repofix.state import SQLiteEventStore
 from repofix.test_agent.runner import TestAgentRunner, should_trigger
@@ -221,13 +221,9 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
             api_key=api_key, retry_limit=config.model_retry_limit, thinking=config.thinking,
         )
         reviewer_clock = SystemClock()
-        reviewer_budget = BudgetTracker(config, reviewer_clock)
-
-        def reviewer_attempt_hook():
-            # 仅占用 Reviewer 独立模型预算；Reviewer 工具调用已在 ReviewRunner 内计入全局
-            reviewer_budget.reserve_model_attempt()
-
-        reviewer_adapter.on_attempt = reviewer_attempt_hook
+        # Reviewer 预算统一由 ReviewRunner 内部管理（model_calls ≤
+        # max_reviewer_model_calls；Run 级 token 台账经 usage_sink 上报）——
+        # 此处不再创建重复预算（此前创建的 hook 会被内部覆盖，从未生效）
         return ReviewRunner(
             run_id=review_run_id, config=config,
             model_client=reviewer_adapter, registry=registry,

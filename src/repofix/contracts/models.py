@@ -63,6 +63,8 @@ class RunConfig(BaseModel):
     max_tool_calls: int = Field(default=150, ge=1)
     max_duration_seconds: int = Field(default=1200, ge=1)
     max_total_tokens: int | None = 800000
+    # 预留字段：当前未强制执行——成本经 cost_report 事后报告；运行中按估算
+    # 成本熔断属 Future Work（需 Runner 循环内逐轮累计估算成本）
     cost_limit_usd: float | None = None
     # —— 执行环境 ——
     command_timeout_seconds: int = Field(default=120, ge=1)
@@ -103,6 +105,8 @@ class RunConfig(BaseModel):
     # —— Test Agent（MVP v0.4 功能 B；默认关闭。一次性生成：模型错误重试关闭，
     #    真实 API 请求尝试不超过 test_agent_max_model_calls）——
     test_agent_enabled: bool = False
+    # 当前实现恒为一次调用、不重试（generator 未读取此参数）——保留为
+    # Test Agent 接入统一 reserve_model_attempt 机制后的重试上限（P2 遗留）
     test_agent_max_model_calls: int = Field(default=1, ge=1)
     # —— 保留扩展（MVP 未实现）：approval_mode 恒为 deny 语义：越权直接拒绝 ——
     output_dir: str = "./repofix-data"

@@ -265,7 +265,8 @@ class TestBaselineReproduction:
         assert report.status is ReproStatus.REPRODUCED
         assert report.triggered is True
         assert report.baseline_exit_code == 1
-        assert report.token_usage == {"prompt": 100, "completion": 50, "total": 150}
+        assert report.token_usage == {"prompt": 100, "completion": 50, "total": 150,
+                                      "cached_tokens": None}
         assert report.authoritative_verification is False
         # 生成测试只注入测试工作区，原仓库不被触碰
         injected = tmp_path / "workspaces" / f"{RUN_ID}-testagent" / GENERATED_TEST_PATH
@@ -341,7 +342,8 @@ class TestBaselineReproduction:
         report = runner.run_baseline(empty_preflight())
         assert report.status is ReproStatus.NOT_REPRODUCED
         # Gateway 未返回 Usage → 明确记录为未知，不得伪造为零
-        assert report.token_usage == {"prompt": None, "completion": None, "total": None}
+        assert report.token_usage == {"prompt": None, "completion": None, "total": None,
+                                      "cached_tokens": None}
         runner.cleanup()
 
 
@@ -572,7 +574,8 @@ class TestAuthoritativeSemanticsUnchanged:
 
 
 class TestCliIntegration:
-    def _install_fake_stack(self, monkeypatch, bug_repo, tmp_path, exec_results):
+    def _install_fake_stack(self, monkeypatch, bug_repo, tmp_path, exec_results,
+                            test_agent_model_client=None):
         """真实 CLI 流程 + 假模型/容器 + 真实 Verifier：验证 run() 对新功能的编排与产物。"""
         import repofix.cli as cli_module
 
@@ -593,13 +596,20 @@ class TestCliIntegration:
             calc = handle.task_dir / "calc.py"
             calc.write_text(calc.read_text(encoding="utf-8").replace("a - b", "a + b"),
                             encoding="utf-8")
+            # v1.1 统一台账（镜像真实 cli._build_stack 接线）：
+            # Reviewer/Test Agent 用量经 sink 汇入 max_total_tokens 检查
+            run_usage_sink = {"reviewer_tokens": 0, "test_agent_tokens": 0}
             if config.test_agent_enabled:
                 ta = TestAgentRunner(
                     run_id=run_id, task=task_spec, config=config,
-                    model_client=ScriptedModelClient([generation_response()]),
+                    model_client=(test_agent_model_client
+                                  if test_agent_model_client is not None
+                                  else ScriptedModelClient([generation_response()])),
                     store=store, workspaces_root=Path(config.output_dir) / "workspaces",
                     docker_cli=cli)
                 ta.run_baseline(report)
+                run_usage_sink["test_agent_tokens"] = int(
+                    ta.report.token_usage.get("total") or 0)
                 extras.test_agent = ta
             if config.repo_overview_enabled:
                 from repofix.cli import _generate_repo_overview
@@ -623,7 +633,12 @@ class TestCliIntegration:
                 repo_overview_meta=extras.repo_overview_meta or None,
                 test_agent_note=(extras.test_agent.main_context_note()
                                  if extras.test_agent is not None else None),
+                upstream_token_usage=(dict(extras.test_agent.report.token_usage)
+                                      if extras.test_agent is not None else None),
             )
+            runner.budget.external_tokens_fn = lambda: int(
+                run_usage_sink.get("test_agent_tokens") or 0
+            ) + int(run_usage_sink.get("reviewer_tokens") or 0)
             return runner, store, workspace, manager, handle, report, extras
 
         monkeypatch.setattr(cli_module, "_build_stack", fake_stack)
@@ -709,3 +724,41 @@ class TestCliIntegration:
         test_report = json.loads((run_dir / "test-report.json").read_text(encoding="utf-8"))
         assert "repo_overview" not in test_report
         assert "test_agent" not in test_report
+
+
+class TestGenerationFailureDoesNotBlockRun:
+    def test_generation_failure_still_produces_run(self, bug_repo, tmp_path, monkeypatch):
+        """P0 回归（CLI 级）：Test Agent 模型调用失败（usage 未知 → token_usage
+        全 None）时，主流程照常完成并产出全部产物——cost_report 展示 None、
+        合计按 0 计，不得在收尾阶段 int(None) 崩溃。"""
+        from repofix.gateway.client import ModelPermanentError
+
+        TestCliIntegration._install_fake_stack(
+            self, monkeypatch, bug_repo, tmp_path,
+            PytestScriptedCli([CliResult(1, "", BASELINE_FAILED_OUTPUT),
+                               CliResult(0, "", "")]),
+            test_agent_model_client=ScriptedModelClient(
+                [ModelPermanentError("401 unauthorized")]))
+        from typer.testing import CliRunner
+
+        from repofix.cli import app
+
+        result = CliRunner().invoke(app, [
+            "run", "--repo", str(bug_repo), "--task", "Fix add", "--test-command", "auto",
+            "--output-dir", str(tmp_path / "data"), "--test-agent", "--no-review",
+        ])
+        assert result.exit_code == 1  # COMPLETED + 验证 INCONCLUSIVE 的约定退出码
+        run_dirs = list((tmp_path / "data" / "runs").iterdir())
+        run_dir = run_dirs[0]
+        # 全部产物落盘（P0 崩溃时 result.json / trajectory.jsonl / patch 全部缺失）
+        assert (run_dir / "result.json").exists()
+        assert (run_dir / "trajectory.jsonl").exists()
+        assert (run_dir / "changes.patch").exists()
+        result_payload = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+        assert result_payload["runtime_status"] == "completed"
+        cr = result_payload["cost_report"]
+        assert cr["test_agent"]["total"] is None  # 展示"未知"，不伪造为零
+        # fake stack 的 Main 响应不带 usage → 合计 0（关键断言是"不崩溃、产物齐全"）
+        assert cr["total_tokens"] == 0
+        report_payload = json.loads((run_dir / "test-agent" / "report.json").read_text(encoding="utf-8"))
+        assert report_payload["status"] == "generation_failed"

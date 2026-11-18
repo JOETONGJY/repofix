@@ -82,6 +82,7 @@ class ReviewRunner:
         self._usage_sink = usage_sink
         # Reviewer 自身用量（v1.1 成本报告：此前 usage 被丢弃，Run 报表拼不出 Reviewer 成本）
         self.token_usage = {"prompt": 0, "completion": 0, "total": 0, "cached_tokens": 0}
+        self._review_budget: BudgetTracker | None = None  # _bounded_review 内赋值；防御外部调用
         self._step = 0
         self._submitted: ReviewReport | None = None
 
@@ -143,8 +144,11 @@ class ReviewRunner:
             # → 审查提前结束（INCONCLUSIVE，RV-06），不让 Reviewer 把 Run 推过总预算
             try:
                 self._global_budget.check_aux_budget()
-            except BudgetViolation:
-                return self._inconclusive("run token budget exhausted; review ended early")
+            except BudgetViolation as exc:
+                # 诊断区分：max_total_tokens（token 台账触顶）与 max_duration_seconds
+                #（墙钟触顶）都归入"Run 预算耗尽"，但原因如实入报告
+                return self._inconclusive(
+                    f"run budget exhausted ({exc.reason}); review ended early")
             # 工具预算只在只读分发时逐调用检查（评审复核边界 2）：
             # 工具配额用尽后，模型仍可在剩余预算内单独提交 submit_review 结论
             response = self._model_client.complete(self._model_request(context, budget))
