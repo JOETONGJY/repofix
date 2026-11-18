@@ -17,6 +17,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from repofix.context.issue_signals import extract_anchored_locations, match_anchored_to_repo
 from repofix.context.repo_overview import (
     basename_of,
     is_sensitive_path,
@@ -95,6 +96,11 @@ def select_issue_files(
     rels.sort()
 
     keywords = tokenize_issue(instruction)
+    # 锚定信号（v0.5）：Issue 中的 traceback/失败身份/路径提及优先于关键词猜测
+    anchored_files = {
+        rel_file for _, rel_file
+        in match_anchored_to_repo(extract_anchored_locations(instruction), rels)
+    }
     scored: list[tuple[int, str]] = []
     for rel in rels:
         stem = basename_of(rel).rsplit(".", 1)[0].lower()
@@ -105,6 +111,8 @@ def select_issue_files(
                 score += 5
             if kw in parts:
                 score += 2
+        if rel in anchored_files:
+            score += 25
         scored.append((score, rel))
     scored.sort(key=lambda item: (-item[0], item[1]))
     picked = [rel for score, rel in scored if score > 0][:max_files]

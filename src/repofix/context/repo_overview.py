@@ -1,7 +1,8 @@
 """确定性 Repository Overview 生成器（MVP v0.4 功能 A，design 补充）。
 
 在 Main Agent 开始之前生成简洁、可信的仓库概览，减少无效搜索。硬约束：
-- 不调用 LLM / 向量库 / Embeddings / AST 全项目分析；纯确定性文件系统启发；
+- 不调用 LLM / 向量库 / Embeddings；纯确定性文件系统启发 + AST 符号索引
+  （v0.5 Level 2：只 ast.parse 结构提取，不做全项目调用图分析）；
 - 不执行仓库中的任何代码；相同仓库基线 + 相同配置 ⇒ 输出稳定（全部排序确定性）；
 - 基于 iter_workspace_files 的带剪枝遍历（.git/.venv/node_modules/缓存/构建目录跳过，
   逃出工作区的符号链接不跟随）；
@@ -13,6 +14,12 @@ import hashlib
 import re
 from pathlib import Path
 
+from repofix.context.issue_signals import (
+    AnchoredLocation,
+    extract_anchored_locations,
+    match_anchored_to_repo,
+)
+from repofix.context.symbol_index import SymbolEntry, SymbolIndex, build_symbol_index
 from repofix.workspace.docker_workspace import iter_workspace_files
 
 DEFAULT_MAX_FILES = 200
@@ -190,8 +197,12 @@ def _find_entry_points(rel_paths: list[str]) -> list[str]:
 
 
 def _score_candidate(rel: str, repo_root: Path, keywords: list[str],
-                     content_cache: dict[str, str]) -> int:
-    """候选文件评分：文件名 / 路径段命中 + 有界内容命中。确定性平局按路径排序。"""
+                     content_cache: dict[str, str], anchored_files: set[str] | None = None) -> int:
+    """候选文件评分：锚定位置 > 文件名 / 路径段命中 > 有界内容命中。
+
+    锚定（Traceback/失败身份/路径提及）+25：Issue 白给的定位信号优先于
+    关键词猜测（关键词相关不一定行为相关）。确定性平局按路径排序。
+    """
     name = basename_of(rel).lower()
     stem = name.rsplit(".", 1)[0]
     parts = [seg.lower() for seg in rel.replace("\\", "/").split("/")[:-1]]
@@ -209,13 +220,16 @@ def _score_candidate(rel: str, repo_root: Path, keywords: list[str],
         for kw in keywords:
             if lowered[kw] in content:
                 score += 1
+    if anchored_files and rel in anchored_files:
+        score += 25
     return score
 
 
 def _select_candidate_files(repo_root: Path, rel_paths: list[str], issue_text: str,
-                            max_candidates: int) -> list[str]:
-    """Candidate files：按 Issue 关键词与文件名/路径简单匹配；无关键词时退化为
-    确定性的源码文件顺序（浅层 .py 优先）。不实现语义检索。"""
+                            max_candidates: int,
+                            anchored_files: set[str] | None = None) -> list[str]:
+    """Candidate files：锚定位置 > Issue 关键词与文件名/路径匹配；无信号时
+    退化为确定性的源码文件顺序（浅层 .py 优先）。不实现语义检索。"""
     py_like = [
         rel for rel in rel_paths
         if rel.endswith(".py") and not is_sensitive_path(rel)
@@ -224,12 +238,43 @@ def _select_candidate_files(repo_root: Path, rel_paths: list[str], issue_text: s
     if not issue_text.strip():
         return sorted(py_like, key=lambda rel: (rel.count("/"), rel))[:max_candidates]
     keywords = tokenize_issue(issue_text)
-    if not keywords:
+    if not keywords and not anchored_files:
         return sorted(py_like, key=lambda rel: (rel.count("/"), rel))[:max_candidates]
     cache: dict[str, str] = {}
-    scored = [(_score_candidate(rel, repo_root, keywords, cache), rel) for rel in py_like]
+    scored = [(_score_candidate(rel, repo_root, keywords, cache, anchored_files), rel)
+              for rel in py_like]
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [rel for score, rel in scored if score > 0][:max_candidates]
+
+
+def _candidate_annotations(rel: str, index: "SymbolIndex",
+                           anchored_matched: list[tuple[AnchoredLocation, str]]) -> list[str]:
+    """候选文件的符号/锚定/引用标注（Level 2；每类都有界，确定性顺序）。"""
+    annotation_lines: list[str] = []
+    for location, anchored_file in anchored_matched:
+        if anchored_file != rel:
+            continue
+        location_part = f":{location.line}" if location.line else ""
+        label = ("test failure " + location.test_name) if location.kind == "test_failure" \
+            else location.kind
+        annotation_lines.append(f"    anchored{location_part} ({label})")
+    file_symbols = index.symbols_in_file(rel)[:4]
+    if file_symbols:
+        rendered = ", ".join(
+            f"{_symbol_display(entry)}" for entry in file_symbols)
+        annotation_lines.append(f"    symbols: {rendered}")
+    importers = index.imported_by_of(rel)[:2]
+    if importers:
+        annotation_lines.append(f"    imported by: {', '.join(importers)}")
+    return annotation_lines
+
+
+def _symbol_display(entry: "SymbolEntry") -> str:
+    if entry.kind == "class":
+        return f"{entry.name} (class, {entry.line})"
+    if entry.kind == "method":
+        return f"{entry.qualname}() ({entry.line})"
+    return f"{entry.name}() ({entry.line})"
 
 
 def build_repo_overview(
@@ -239,12 +284,15 @@ def build_repo_overview(
     max_chars: int = DEFAULT_MAX_CHARS,
     issue_text: str = "",
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    symbol_index: "SymbolIndex | None" = None,
 ) -> str:
     """生成确定性仓库概览文本。
 
     参数即全部预算上限（文件数 / 目录深度 / 输出字符数 / 候选文件数）。
-    issue_text 非空时 Candidate files 按 Issue 关键词做路径与文件名简单匹配。
-    生成失败由调用方捕获处理（本函数只做文件系统读取，不执行仓库代码）。
+    issue_text 非空时：Traceback / 失败身份 / 路径提及作为锚定位置（最高
+    优先级排序信号），Candidate files 按 锚定 > 关键词 匹配，并附 AST 符号
+    标注（v0.5 Level 2）。生成失败由调用方捕获处理（本函数只做文件系统
+    读取与 ast.parse，不执行仓库代码）。
     """
     repo_root = Path(repo_root)
     if not repo_root.is_dir():
@@ -252,6 +300,16 @@ def build_repo_overview(
         raise NotADirectoryError(f"repository root does not exist: {repo_root}")
     rel_paths, truncated = scan_repo_files(repo_root, max_files, max_depth)
     project = repo_root.resolve().name
+
+    # 锚定信号（Traceback-Aware Retrieval，v0.5）
+    anchored_matched: list[tuple[AnchoredLocation, str]] = []
+    anchored_files: set[str] = set()
+    if issue_text.strip():
+        anchored_matched = match_anchored_to_repo(
+            extract_anchored_locations(issue_text), rel_paths)
+        anchored_files = {f for _, f in anchored_matched}
+    # 符号索引（Level 2；默认内部构建，测试可注入预构建索引）
+    index = symbol_index if symbol_index is not None else build_symbol_index(repo_root)
 
     lines: list[str] = ["Repository Overview", "", f"Project: {project}", "", "Structure:"]
     structure = _render_structure(rel_paths, max_depth)
@@ -267,17 +325,32 @@ def build_repo_overview(
     else:
         lines.append("  (none detected)")
 
+    if anchored_matched:
+        lines.append("")
+        lines.append("Anchored locations (from the issue):")
+        for location, rel_file in anchored_matched[:8]:
+            location_part = f":{location.line}" if location.line else ""
+            label = {
+                "traceback": "traceback",
+                "test_failure": f"test failure {location.test_name}",
+                "path_mention": "mentioned",
+            }.get(location.kind, location.kind)
+            lines.append(f"  {rel_file}{location_part} ({label})")
+
     entries = _find_entry_points(rel_paths)
     if entries:
         lines.append("")
         lines.append("Entry points:")
         lines.extend(f"  {rel}" for rel in entries)
 
-    candidates = _select_candidate_files(repo_root, rel_paths, issue_text, max_candidates)
+    candidates = _select_candidate_files(repo_root, rel_paths, issue_text, max_candidates,
+                                         anchored_files=anchored_files)
     if candidates:
         lines.append("")
         lines.append("Candidate files:")
-        lines.extend(f"  {rel}" for rel in candidates)
+        for rel in candidates:
+            lines.append(f"  {rel}")
+            lines.extend(_candidate_annotations(rel, index, anchored_matched))
 
     notes = [
         "",

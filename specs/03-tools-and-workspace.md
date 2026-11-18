@@ -1,13 +1,13 @@
 # RepoFix 实现规格 03：工具与工作区（Tools & Workspace）
 
-> 版本：V0.4（M1 修订见 V0.3 记录；M2 评审修订：工具计数统一为五个工作区工具 + 两个控制动作）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[../design/04-tool-system.md](../design/04-tool-system.md)。
+> 版本：V0.5（V0.4 修订见前版记录；V0.5 修订：新增只读工具 `find_symbol`——AST 符号索引 + import 反向边，工作区工具增至六个；M1/M2 修订见更早版本记录）。上位文档：[../技术方案探讨.md](../技术方案探讨.md)、[../design/04-tool-system.md](../design/04-tool-system.md)。
 > 依赖：[01-contracts.md](01-contracts.md)。
 
 ---
 
 ## 工具注册与通用约定
 
-- 工具注册表：**五个**工作区工具（list_files / search_code / read_file / apply_patch / run_command）+ `finish` / `submit_review` 两个 Runtime 控制动作。名称、参数 Schema、副作用类别固定如下，**不得增删改**。
+- 工具注册表：**六个**工作区工具（list_files / search_code / read_file / find_symbol / apply_patch / run_command）+ `finish` / `submit_review` 两个 Runtime 控制动作。名称、参数 Schema、副作用类别固定如下，**不得增删改**（修订须先改本文件）。
 - **静态注册**：工具在程序启动时注册；不支持模型运行中安装、发现或注册新工具；不支持 MCP。
 - **权限按 actor 区分**：Main 与 Reviewer 复用同一 Registry，按角色生成不同工具视图——Reviewer 视图中不存在 `apply_patch / run_command / finish`。只读约束由注册表 + Workspace 权限共同保证，**不能仅写在 System Prompt 中**。Agent 角色由 Runtime 设置，不能来自模型参数。
 - 副作用类别决定调度行为（见 02）：`read_only` 失败后同类可继续；`write` / `process` 失败即中止批次。
@@ -17,7 +17,7 @@
   - **Context Engine 软预算 = RunConfig.tool_output_truncate_chars（默认 2000 字符）**：在上下文构造时按内容重要性与剩余预算取舍，**不得无条件截断所有工具结果**（否则 read_file 稍长的源文件时模型总看不到关键函数）。
   - 完整输出（stdout / stderr 全文）存 SQLite，不进模型上下文（specs/01）。
 
-## 七个动作契约
+## 八个动作契约
 
 ### list_files — 副作用：read_only
 
@@ -54,6 +54,17 @@
 返回：`content`（**带行号**）、`start_line`、`total_lines`、`sha256`（**当前文件内容 Hash，供 apply_patch 版本校验**）、`truncated`。
 
 只支持受限大小的文本文件；二进制 / 超大文件 → INVALID_ARGUMENT（明确拒绝）。文件不存在 → EXECUTION_ERROR（业务反馈，让模型重新定位）。
+
+### find_symbol — 副作用：read_only（v0.5 新增）
+
+| 参数 | 类型 | 默认 | 约束 |
+| --- | --- | --- | --- |
+| name | str | 必填 | 符号短名、限定名或限定名后缀（如 `update_total` / `OrderService.update_total`） |
+| limit | int | 10 | 1–50 |
+
+返回：定义位置列表 `Symbol qualname  file:line (kind)`，每个定义附仓库内引用方（`imported by:`，最多 3 个）；无命中是正常结果（SUCCEEDED 空结果）。
+
+实现边界：确定性 AST 索引（`ast.parse` 定义提取 + import 解析为仓库内文件的反向边），**每次调用重建**（agent 会编辑文件，缓存会失真）；有界（默认 ≤300 文件 / 单文件 ≤256KiB / 符号与 import 边各有总量上限）；不执行仓库代码；语法错误 / 二进制文件静默跳过；无路径参数，天然不涉及工作区逃逸。与 search_code 的分工：search_code 按文本内容找使用处，find_symbol 按**行为名称**跳到定义与引用方（关键词相关 ≠ 行为相关时的定位手段）。
 
 ### apply_patch — 副作用：write（**单文件原子操作**）
 
@@ -159,7 +170,7 @@ git -C <task_dir> checkout <base_commit>
 
 - **MVP 只处理 base_commit 快照，且默认拒绝脏工作区**（design/01）：已跟踪文件修改、未跟踪且未忽略文件 → CLI 直接拒绝；被忽略文件不影响。不自动 Commit / Stash / 清理用户工作区。
 - 所有内容操作统一经 **WorkspaceAdapter** 作用于 `<task_dir>`；Runtime 业务代码禁止直接 `open()` 副本文件。MVP：宿主进程对副本目录执行文件操作 + `docker exec` 执行命令（副本 bind-mount 进容器）；后续可整体替换为容器内实现。
-- **Workspace 逻辑接口（design/05）**：`initialize / read_file / search_code / list_files / apply_patch / run_command / get_changes / close`。`get_changes` 返回**相对 Base Commit 的文件变化与 Diff**——`run_command` 也可能修改文件，**最终 Patch 必须从实际工作区与基线比较导出，不能只依赖 apply_patch 记录**（测试缓存、构建产物、意外新文件在导出时检查）。`WorkspaceHandle` 只由可信 Runtime 持有，模型不得指定容器 ID 或宿主机路径。
+- **Workspace 逻辑接口（design/05；v0.5 增 find_symbol）**：`initialize / read_file / search_code / list_files / find_symbol / apply_patch / run_command / get_changes / close`。`get_changes` 返回**相对 Base Commit 的文件变化与 Diff**——`run_command` 也可能修改文件，**最终 Patch 必须从实际工作区与基线比较导出，不能只依赖 apply_patch 记录**（测试缓存、构建产物、意外新文件在导出时检查）。`WorkspaceHandle` 只由可信 Runtime 持有，模型不得指定容器 ID 或宿主机路径。
 - **apply_patch 原子写入**：校验后写入临时文件，再替换目标文件；版本检查与写入之间防范并发变化。
 
 ### 容器配置

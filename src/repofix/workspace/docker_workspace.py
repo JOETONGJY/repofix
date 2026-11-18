@@ -443,6 +443,8 @@ class DockerWorkspace:
             return self.search_code(**arguments)
         if tool_name == "read_file":
             return self.read_file(**arguments)
+        if tool_name == "find_symbol":
+            return self.find_symbol(**arguments)
         if tool_name == "apply_patch":
             return self.apply_patch(**arguments)
         if tool_name == "run_command":
@@ -569,6 +571,34 @@ class DockerWorkspace:
             content=numbered + suffix + sha_line,
             truncated=truncated,
         )
+
+    def find_symbol(self, name: str, limit: int = 10) -> ToolResult:
+        """符号定义查找（v0.5 Level 2）：确定性 AST 索引 + import 反向边。
+
+        每次调用重建有界索引（agent 会编辑文件，缓存会失真）；只读、
+        不执行仓库代码；无路径参数，天然不涉及工作区逃逸。
+        """
+        from repofix.context.symbol_index import build_symbol_index
+
+        try:
+            index = build_symbol_index(self.task_dir)
+        except (WorkspaceError, OSError, ValueError) as exc:
+            return ToolResult(call_id="pending", status=ExecutionStatus.FAILED,
+                              error_code=ToolErrorCode.EXECUTION_ERROR,
+                              error_message=f"symbol index unavailable: {exc}")
+        entries = index.lookup(name)[:max(1, int(limit))]
+        if not entries:
+            return ToolResult(call_id="pending", status=ExecutionStatus.SUCCEEDED,
+                              content=f"(no symbol matched: {name})", exit_code=0)
+        lines: list[str] = []
+        for entry in entries:
+            lines.append(entry.render())
+            importers = index.imported_by_of(entry.file)
+            if importers:
+                lines.append(f"  imported by: {', '.join(importers[:3])}"
+                             + (f" (+{len(importers) - 3} more)" if len(importers) > 3 else ""))
+        return ToolResult(call_id="pending", status=ExecutionStatus.SUCCEEDED,
+                          content="\n".join(lines), exit_code=0)
 
     def apply_patch(self, path: str, patch: str, expected_sha256: str | None = None) -> ToolResult:
         if self.read_only:

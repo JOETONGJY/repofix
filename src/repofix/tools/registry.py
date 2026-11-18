@@ -55,6 +55,13 @@ class ReadFileArgs(_StrictModel):
     max_lines: int = Field(default=200, ge=1, le=1000)
 
 
+class FindSymbolArgs(_StrictModel):
+    """符号定义查找（v0.5 AST 索引）：短名、限定名或限定名后缀。"""
+
+    name: str = Field(min_length=1)
+    limit: int = Field(default=10, ge=1, le=50)
+
+
 class ApplyPatchArgs(_StrictModel):
     path: str = Field(min_length=1)
     patch: str = Field(min_length=1)
@@ -171,6 +178,19 @@ def register_default_tools(registry: ToolRegistry) -> None:
             "read_file",
             "Read a text file with line numbers; returns sha256 for patch version checks.",
             ReadFileArgs,
+            ToolSideEffect.READ_ONLY,
+            read_actors,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            "find_symbol",
+            "Look up Python symbol definitions (function/class/method) by short name or "
+            "qualified-name suffix in a deterministic AST index. Returns definition "
+            "locations (file:line, kind) plus the in-repo files that import the defining "
+            "module - use it to jump from a behavior name to its code without guessing "
+            "paths from keywords.",
+            FindSymbolArgs,
             ToolSideEffect.READ_ONLY,
             read_actors,
         )

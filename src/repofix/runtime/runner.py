@@ -52,7 +52,9 @@ DEFAULT_SYSTEM_RULES = (
     "and validate with run_command. Submit finish (alone in its batch) when the fix is complete. "
     "Use the structured tools first: search_code for code search (supports multiple matches "
     "per file and context lines), list_files for directories, read_file with line ranges for "
-    "exact reading. If your command policy allows grep/rg/ls, use them only as a supplement."
+    "exact reading, find_symbol to locate Python definitions (function/class/method) and "
+    "their importers by name when you know a behavior or class name but not its file. "
+    "If your command policy allows grep/rg/ls, use them only as a supplement."
 )
 
 
