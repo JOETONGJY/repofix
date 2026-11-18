@@ -459,3 +459,34 @@ class TestUpstreamUsageNoneSafe:
         assert cr["test_agent"]["total"] is None
         assert cr["main"]["total"] == 105
         assert cr["total_tokens"] == 105
+
+
+class TestRunLevelTokenUsage:
+    def test_runs_table_gets_run_level_total_with_upstream(self, registry, config):
+        """回归（评审）：runs.total_tokens 必须与 cost_report.total_tokens 同口径
+        （含 Test Agent 上游用量）——Main-only 值会让 budget-exhausted 的 Run
+        显出"预算算错"的假象。"""
+        responses = [
+            model_response(
+                "d1",
+                [make_tool_call("c1", "apply_patch", path="auth.py", patch="--- a\n+++ b")],
+                usage={"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55},
+            ),
+            model_response("d2", [make_tool_call("f1", "finish", summary="done")]),
+        ]
+        store = SQLiteEventStore(":memory:")
+        runner = AgentRunner(
+            run_id="run_upstream_total", task=TaskSpec(**TASK_ARGS), config=config,
+            model_client=ScriptedModelClient(responses), registry=registry,
+            dispatcher=ToolDispatcher(registry, FakeToolExecutor()),
+            store=store,
+            verifier=FakeVerifier([passed_report()]),
+            clock=FakeClock(),
+            patch_hash_provider=lambda: "1" * 64,
+            upstream_token_usage={"prompt": 100, "completion": 10, "total": 100},
+        )
+        result = runner.run()
+
+        assert result.cost_report["total_tokens"] == 155  # Main 55 + upstream 100
+        run = store.get_run("run_upstream_total")
+        assert run["total_tokens"] == 155  # SQLite 与 cost_report 同口径

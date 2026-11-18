@@ -593,7 +593,12 @@ class AgentRunner:
             EventType.RUN_FINISHED,
             {"status": status.value, "termination_reason": termination_reason},
         )
-        self._store.set_run_token_usage(self._run_id, self._token_usage.get("total", 0))
+        # Run 级总量只构建一次 cost report，两处复用：
+        # runs.total_tokens 与 cost_report.total_tokens 必须同口径（统一台账含
+        # Reviewer/Test Agent；此前 Main-only 的值会让 budget-exhausted 的 Run
+        # 显出"预算算错"的假象）
+        cost_report = self._build_cost_report()
+        self._store.set_run_token_usage(self._run_id, cost_report["total_tokens"])
         return RunResult(
             run_id=self._run_id,
             runtime_status=status,
@@ -602,11 +607,11 @@ class AgentRunner:
             modified_files=list(self._working_state.modified_files),
             model_calls=self._budget.model_calls,
             tool_calls=self._budget.tool_calls,
-            token_usage=dict(self._token_usage),
+            token_usage=dict(self._token_usage),  # Main-only 口径（历史契约；Run 级见 cost_report）
             duration_ms=int(self._budget.elapsed_seconds() * 1000),
             review_status=self._review_status,
             reviewed_patch_hash=self._reviewed_patch_hash,
-            cost_report=self._build_cost_report(),
+            cost_report=cost_report,
         )
 
     def _build_cost_report(self) -> dict:

@@ -138,7 +138,8 @@ def arm_table(records_path: Path, traces_dir: Path, sqlite_dir: Path) -> list[di
             "termination": a.get("termination_reason", ""),
             "model_calls": a.get("model_calls", 0),
             "tool_calls": a.get("tool_calls", 0),
-            "tokens": a.get("token_usage", {}).get("total", 0),
+            "tokens": ((a.get("judge", {}).get("cost_report", {}) or {}).get("total_tokens")
+                       or a.get("token_usage", {}).get("total", 0)),
             "agent_seconds": rec.get("agent_seconds", 0),
             "record_run_id": record_run_id,
             "trace_matches_record": (not record_run_id) or record_run_id == m.get("trace_run_id"),

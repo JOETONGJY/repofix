@@ -287,13 +287,23 @@ def run_task(
 
 
 def load_ledger(data_root: Path) -> int:
-    """已花 Token 台账（跨任务累计，来自各任务 eval-record.json）。"""
+    """已花 Token 台账（跨任务累计，来自各任务 eval-record.json）。
+
+    v1.1 统一台账：优先 cost_report.total_tokens（Run 级，含 Reviewer/Test
+    Agent），旧记录（无 cost_report）回退 agent.token_usage.total（Main-only
+    口径——历史数据如实按旧口径累计，报告需注明）。
+    """
     total = 0
     for record_file in Path(data_root, "runs").glob("*/eval-record.json"):
         try:
             record = json.loads(record_file.read_text(encoding="utf-8"))
-            total += int(record.get("agent", {}).get("token_usage", {}).get("total", 0))
-        except (OSError, ValueError, KeyError):
+            cr = record.get("judge", {}).get("cost_report") or record.get("cost_report") or {}
+            cr_total = cr.get("total_tokens")
+            if cr_total is not None:
+                total += int(cr_total)
+            else:
+                total += int(record.get("agent", {}).get("token_usage", {}).get("total", 0))
+        except (OSError, ValueError, KeyError, TypeError):
             continue
     return total
 
@@ -360,7 +370,10 @@ def summarize(records: list[dict]) -> dict:
              "runtime_status": r["agent"].get("runtime_status"),
              "verification": r["agent"].get("verification_status"),
              "model_calls": r["agent"].get("model_calls"),
-             "tokens": r["agent"].get("token_usage", {}).get("total", 0),
+             # Run 级口径优先（cost_report.total_tokens 含 Reviewer/Test Agent）；
+            # 旧记录无 cost_report 时回退 agent.token_usage.total
+            "tokens": (r.get("judge", {}).get("cost_report", {}) or {}).get("total_tokens",
+                       r["agent"].get("token_usage", {}).get("total", 0)),
              "duration_seconds": r.get("agent_seconds", 0),
              "judge_reason": r["judge"]["reason"][:160]}
             for r in records
