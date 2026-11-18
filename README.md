@@ -195,7 +195,7 @@ CLI 接收任务 + 仓库 + 运行配置
 
 ### SWE-bench Lite Mini-Eval（实测）
 
-由于我们的MVP agent的受限容器仅支持pytest系列command的白名单，所以我们选取了 SWE-bench Lite 的 95/300 题进行评测（FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归算 Resolved）。配置：deepseek-flash-1017（Non-thinking）、1M token / 单题100次调用上限：
+由于我们的MVP agent的受限容器仅支持pytest系列command的白名单，所以我们选取了 SWE-bench Lite 的 95/300 题进行评测（FAIL_TO_PASS 全过且 PASS_TO_PASS 零回归算 Resolved）。配置：deepseek-flash-1017（Non-thinking）、600k token / 单题100次调用上限：
 
 > **SWE-bench Lite Python 子集条件解决率 54.7%**
 
@@ -206,7 +206,7 @@ CLI 接收任务 + 仓库 + 运行配置
 可以作为对照的有开源社区的Yuki harness，300题通过率为72%。
 | agent | 成功率 | SOLVED平均调用次数 | token上限设置 | API配置 | 窗口配置 |
 | --- | --- | --- | --- | --- | --- |
-| RepoFix | 54% | 64次 | 1M | THINKING关 | 128K |
+| RepoFix | 54% | 64次（触顶截断均值；自然收敛约38次） | 600k | THINKING关 | 1M |
 | Yuki | 72% | 38次 | 无 | THINKING开 | 1M |
 
 > 范围声明：**SWE-bench Lite constrained subset**，不代表 Lite 全量成绩，不与公开排行榜对比。评测适配层位于 `evaluation/swebench/`，逐题 Trace 与判定证据全量留档。
