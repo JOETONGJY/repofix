@@ -81,6 +81,7 @@ class AgentRunner:
         test_agent_note: str | None = None,
         target_unchanged: Callable[[ToolCall], bool] | None = None,
         review_runner_factory: Callable[[str], "object"] | None = None,
+        upstream_token_usage: dict | None = None,  # v1.1：Runner 前已消耗的用量（Test Agent）
         reviewer_executor: object | None = None,
     ):
         self._run_id = run_id
@@ -122,6 +123,9 @@ class AgentRunner:
         self._test_agent_note = test_agent_note
         # M4：Review Agent（review_enabled=True 时由 Runner 在 REVIEWING 阶段调度）
         self._review_runner_factory = review_runner_factory
+        # v1.1 成本报告：分 actor 用量（Test Agent 为构造期注入的"上游"用量）
+        self._upstream_token_usage = dict(upstream_token_usage or {})
+        self._review_token_usage: dict | None = None
         self._reviewer_executor = reviewer_executor
         self._state_machine = StateMachine()
         self._working_state = WorkingState(run_id=run_id)
@@ -438,6 +442,8 @@ class AgentRunner:
                 workspace_ref=self._run_id,
                 patch_hash=patch_hash,
             ))
+        # v1.1 成本报告：暂存 Reviewer 用量（其 usage 此前被丢弃，Run 报表拼不出来）
+        self._review_token_usage = dict(getattr(review_runner, "token_usage", None) or {})
 
         # P1-1：审查前后核对真实工作区 Patch Hash——审查期间代码变化或**无法确认未变化**
         # （查询失败）→ 审查降级 INCONCLUSIVE，不得默认接受（评审复核边界 3）
@@ -600,7 +606,42 @@ class AgentRunner:
             duration_ms=int(self._budget.elapsed_seconds() * 1000),
             review_status=self._review_status,
             reviewed_patch_hash=self._reviewed_patch_hash,
+            cost_report=self._build_cost_report(),
         )
+
+    def _build_cost_report(self) -> dict:
+        """v1.1 全流程成本报告：分 actor 用量 + 合计 + 估算成本（单价可在
+        RunConfig 配置；未配置单价时 estimated_cost_usd 为 None，不编造）。"""
+        main = dict(self._token_usage)
+        reviewer = dict(getattr(self, "_review_token_usage", None) or {})
+        test_agent = dict(self._upstream_token_usage or {})
+
+        def _t(d: dict) -> int:
+            return int(d.get("total", 0))
+
+        total_tokens = _t(main) + _t(reviewer) + _t(test_agent)
+        prices = self._config
+        estimated = None
+        if (prices.price_input_usd_per_m is not None
+                and prices.price_cached_input_usd_per_m is not None
+                and prices.price_output_usd_per_m is not None):
+            estimated = 0.0
+            for d in (main, reviewer, test_agent):
+                prompt = d.get("prompt", 0) or 0
+                cached = d.get("cached_tokens", 0) or 0
+                completion = d.get("completion", 0) or 0
+                non_cached = max(0, prompt - cached)
+                estimated += (non_cached * prices.price_input_usd_per_m
+                              + cached * prices.price_cached_input_usd_per_m
+                              + completion * prices.price_output_usd_per_m) / 1e6
+            estimated = round(estimated, 4)
+        return {
+            "main": main,
+            "reviewer": reviewer,
+            "test_agent": test_agent,
+            "total_tokens": total_tokens,
+            "estimated_cost_usd": estimated,
+        }
 
     def _transition(self, target: RunStatus) -> None:
         self._state_machine.transition(target)

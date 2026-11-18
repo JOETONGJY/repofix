@@ -69,6 +69,7 @@ class ReviewRunner:
         store: SQLiteEventStore,
         clock: Clock,
         global_tool_budget: BudgetTracker,  # CONS-01：Reviewer 只读调用计入全局计数器
+        usage_sink: dict | None = None,  # v1.1 统一台账：向 Run 级成本报告上报用量
     ):
         self._run_id = run_id
         self._config = config
@@ -78,6 +79,9 @@ class ReviewRunner:
         self._store = store
         self._clock = clock
         self._global_budget = global_tool_budget
+        self._usage_sink = usage_sink
+        # Reviewer 自身用量（v1.1 成本报告：此前 usage 被丢弃，Run 报表拼不出 Reviewer 成本）
+        self.token_usage = {"prompt": 0, "completion": 0, "total": 0, "cached_tokens": 0}
         self._step = 0
         self._submitted: ReviewReport | None = None
 
@@ -115,6 +119,7 @@ class ReviewRunner:
             ),
             self._clock,
         )
+        self._review_budget = budget  # 供 _accumulate_usage 记录用量
         # 评审 P1-3：真实 API 请求尝试（含 Gateway 内部重试）经 on_attempt 计入独立预算。
         # 共享 Main Adapter 时不可占用其钩子——CLI 为 Reviewer 装配独立 Adapter 实例；
         # 脚本客户端无重试行为，钩子等价于 Runtime 请求计数。
@@ -134,14 +139,22 @@ class ReviewRunner:
         context.start_task(_review_task_text(request), base_commit=request.base_commit)
 
         for _ in range(self._config.max_reviewer_model_calls + 1):
+            # Run 级统一总预算（v1.1）：Main+Reviewer 合计用量触顶 max_total_tokens
+            # → 审查提前结束（INCONCLUSIVE，RV-06），不让 Reviewer 把 Run 推过总预算
+            try:
+                self._global_budget.check_aux_budget()
+            except BudgetViolation:
+                return self._inconclusive("run token budget exhausted; review ended early")
             # 工具预算只在只读分发时逐调用检查（评审复核边界 2）：
             # 工具配额用尽后，模型仍可在剩余预算内单独提交 submit_review 结论
             response = self._model_client.complete(self._model_request(context, budget))
             self._step += 1
+            self._accumulate_usage(response.usage)
             self._append_event(
                 EventType.MODEL_RESPONDED,
                 {"actor": AgentActor.REVIEWER.value, "decision_id": response.decision_id,
-                 "tool_call_count": len(response.tool_calls)},
+                 "tool_call_count": len(response.tool_calls),
+                 "usage": response.usage},
             )
 
             if not response.tool_calls:
@@ -170,6 +183,26 @@ class ReviewRunner:
                 report.patch_hash = request.patch_hash  # 审查版本绑定（RV-07，Runtime 另有事后复核）
                 return report
         return self._inconclusive("reviewer produced no review within its model budget")
+
+    def _accumulate_usage(self, usage: dict | None) -> None:
+        """Reviewer 用量累积（v1.1 成本报告）：此前 usage 被丢弃，Run 报表拼不出
+        Reviewer 成本。同步上报 usage_sink（Main 的统一台账）。"""
+        if not usage:
+            return
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = usage.get(key)
+            if isinstance(value, int):
+                short = key.removesuffix("_tokens")
+                self.token_usage[short] = self.token_usage.get(short, 0) + value
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            cached = details.get("cached_tokens")
+            if isinstance(cached, int) and cached > 0:
+                self.token_usage["cached_tokens"] = (
+                    self.token_usage.get("cached_tokens", 0) + cached)
+        self._review_budget.record_usage(usage)  # Reviewer 自身预算的用量记录
+        if self._usage_sink is not None:
+            self._usage_sink["reviewer_tokens"] = self.token_usage["total"]
 
     def _model_request(self, context: ContextBuilder, budget: BudgetTracker) -> ModelRequest:
         if not hasattr(self._model_client, "on_attempt"):

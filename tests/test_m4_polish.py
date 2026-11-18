@@ -438,3 +438,98 @@ class TestRecheckRound2:
         assert reviews[0]["status"] == "INCONCLUSIVE"
         assert reviews[0].get("original_status") == "APPROVED"
         assert "workspace changed" in reviews[0]["summary"]
+
+
+class TestCostReport:
+    def test_cost_report_assembled_with_reviewer_usage(self, registry):
+        """v1.1 成本报告：分 actor（main/reviewer/test_agent）用量进 RunResult.cost_report；
+        单价配置齐全时给出 estimated_cost_usd，未配置时为 None（不编造）。"""
+        config = RunConfig(
+            model_id="m", review_enabled=True,
+            price_input_usd_per_m=0.27, price_cached_input_usd_per_m=0.07,
+            price_output_usd_per_m=1.1,
+        )
+        registry2 = ToolRegistry()
+        register_default_tools(registry2)
+
+        class ScriptedReview:
+            token_usage = {"prompt": 500, "completion": 60,
+                           "total": 560, "cached_tokens": 400}
+
+            def review(self, request):
+                from repofix.contracts import ReviewReport
+                return ReviewReport(status="APPROVED", patch_hash="1" * 64,
+                                    findings=[], summary="s")
+
+        patch = "--- a/auth.py\n+++ b/auth.py\n..."
+        responses = [
+            model_response(
+                "d1",
+                [make_tool_call("c1", "apply_patch", path="auth.py", patch=patch)],
+                usage={"prompt_tokens": 1000, "completion_tokens": 50,
+                       "total_tokens": 1050,
+                       "prompt_tokens_details": {"cached_tokens": 800}},
+            ),
+            model_response("d2", [make_tool_call("f1", "finish", summary="修复完成")]),
+        ]
+        runner = AgentRunner(
+            run_id="run_cost", task=TaskSpec(**TASK_ARGS), config=config,
+            model_client=ScriptedModelClient(responses), registry=registry2,
+            dispatcher=ToolDispatcher(registry2, FakeToolExecutor()),
+            store=SQLiteEventStore(":memory:"),
+            verifier=FakeVerifier([_passed()]),
+            clock=FakeClock(),
+            patch_hash_provider=lambda: "1" * 64,
+            review_runner_factory=lambda rid: ScriptedReview(),
+            upstream_token_usage={"prompt": 2000, "completion": 100,
+                                  "total": 2100, "cached_tokens": 1500},
+        )
+        result = runner.run()
+
+        cr = result.cost_report
+        assert cr["main"]["total"] == 1050
+        assert cr["reviewer"]["total"] == 560
+        assert cr["test_agent"]["total"] == 2100
+        assert cr["total_tokens"] == 1050 + 560 + 2100
+        # 估算成本：main (1000-800)*0.27/1M + 800*0.07/1M + 50*1.1/1M + reviewer
+        # (500-400)*0.27/1M + 400*0.07/1M + 60*1.1/1M + test_agent 同式
+        expected = (
+            (200 * 0.27 + 800 * 0.07 + 50 * 1.1
+             + 100 * 0.27 + 400 * 0.07 + 60 * 1.1
+             + 500 * 0.27 + 1500 * 0.07 + 100 * 1.1) / 1e6
+        )
+        assert cr["estimated_cost_usd"] == round(expected, 4)
+
+    def test_cost_report_no_prices_means_null_estimate(self, registry):
+        config = RunConfig(model_id="m", review_enabled=True)
+        registry2 = ToolRegistry()
+        register_default_tools(registry2)
+
+        class ScriptedReview:
+            token_usage = {"prompt": 10, "completion": 2, "total": 12}
+
+            def review(self, request):
+                from repofix.contracts import ReviewReport
+                return ReviewReport(status="APPROVED", patch_hash="1" * 64,
+                                    findings=[], summary="s")
+
+        responses = [
+            model_response(
+                "d1",
+                [make_tool_call("c1", "apply_patch", path="a.py", patch="--- a\n+++ b")],
+                usage={"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105},
+            ),
+            model_response("d2", [make_tool_call("f1", "finish", summary="done")]),
+        ]
+        runner = AgentRunner(
+            run_id="run_cost2", task=TaskSpec(**TASK_ARGS), config=config,
+            model_client=ScriptedModelClient(responses), registry=registry2,
+            dispatcher=ToolDispatcher(registry2, FakeToolExecutor()),
+            store=SQLiteEventStore(":memory:"),
+            verifier=FakeVerifier([_passed()]),
+            clock=FakeClock(),
+            patch_hash_provider=lambda: "1" * 64,
+            review_runner_factory=lambda rid: ScriptedReview(),
+        )
+        result = runner.run()
+        assert result.cost_report["estimated_cost_usd"] is None

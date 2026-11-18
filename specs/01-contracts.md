@@ -115,7 +115,7 @@ class RunConfig(BaseModel):
     model_id: str
     prompt_version: str = "v0"
     # —— 预算（任一触顶即 BUDGET_EXCEEDED）——
-    max_model_calls: int = 100
+    max_model_calls: int = 50
     max_tool_calls: int = 150
     max_duration_seconds: int = 1200
     max_total_tokens: int | None = 800000  # 启用需可靠计数，不能只信模型返回的最终 Usage
@@ -130,7 +130,10 @@ class RunConfig(BaseModel):
     tool_output_truncate_chars: int = 4000 # Context 层工具输出软预算基座（字符；read_file ×5=20K，其余 ×2=8K）；Dispatcher 另有 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
     context_window_tokens: int | None = None  # 模型上下文窗口（design/07；None = 不裁剪；deepseek-flash 声明 1M）
     output_reserve_tokens: int = 8192         # 本轮输出预留（B_output_reserve）
-    context_recent_full_turns: int = 30      # 近期完整窗口：最近 N 轮完整、更早占位（0 = 关闭 = v0 行为）
+    price_input_usd_per_m: float | None = None       # 估算成本单价（USD/M tok；三者齐备才估算）
+    price_cached_input_usd_per_m: float | None = None
+    price_output_usd_per_m: float | None = None
+    context_recent_full_turns: int = 10      # 近期完整窗口：最近 N 轮完整、更早占位（0 = 关闭 = v0 行为）
     command_policy: str = "strict"           # 命令权限档位：strict | coding_benchmark（v1 受控只读层）
     thinking: str = "disabled"               # 思考模式：disabled | enabled（DeepSeek 二值开关）
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
@@ -284,6 +287,9 @@ class RunResult(BaseModel):
     duration_ms: int
     review_status: str | None = None  # APPROVED / FINDINGS / INCONCLUSIVE / NOT_RUN（design/02）
     reviewed_patch_hash: str | None = None  # 审查对应的 Patch 版本；其后发生修改不得声称已审查
+    cost_report: dict = {}            # v1.1 全流程成本报告：分 actor（main/reviewer/test_agent）
+                                      # 的 prompt/completion/cached_tokens/total、total_tokens
+                                      # 合计与 estimated_cost_usd（单价可在 RunConfig 配置）
 
 
 class ReviewFinding(BaseModel):

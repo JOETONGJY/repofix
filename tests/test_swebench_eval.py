@@ -381,7 +381,7 @@ def test_effective_preflight_summary_uses_runconfig_not_script_args():
     default_summary = effective_preflight_summary(
         {}, RunConfig(model_id="m", review_enabled=False))
     assert default_summary["command_policy"] == "strict"
-    assert default_summary["context_recent_full_turns"] == 30
+    assert default_summary["context_recent_full_turns"] == 10
     v0_summary = effective_preflight_summary(
         {}, RunConfig(model_id="m", review_enabled=False, context_recent_full_turns=0))
     assert v0_summary["context_recent_full_turns"] == 0

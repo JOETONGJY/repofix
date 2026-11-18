@@ -26,7 +26,7 @@ from repofix.contracts import (
 class TestRunConfig:
     def test_defaults_match_specs(self):
         config = RunConfig(model_id="m")
-        assert config.max_model_calls == 100
+        assert config.max_model_calls == 50
         assert config.max_tool_calls == 150
         assert config.max_duration_seconds == 1200
         assert config.command_timeout_seconds == 120

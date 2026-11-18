@@ -57,9 +57,9 @@ class RunConfig(BaseModel):
     model_id: str
     prompt_version: str = "v0"
     # —— 预算（任一触顶即 BUDGET_EXCEEDED）——
-    # v1.1 默认校准（2026-11-15，39 题实证：自然消耗 64 调用/513k token，600k 档
-    # 28/39 触顶）：调用上限 100（自然收敛 ~38 + 难题余量）、token 上限 800k。
-    max_model_calls: int = Field(default=100, ge=1)
+    # v1.2 校准（2026-11-15）：模型调用 50（自然收敛 ~38 + 难题余量）、
+    # token 上限 800k（39 题 v1 实测 avg 513k 的 1.5 倍余量）。
+    max_model_calls: int = Field(default=50, ge=1)
     max_tool_calls: int = Field(default=150, ge=1)
     max_duration_seconds: int = Field(default=1200, ge=1)
     max_total_tokens: int | None = 800000
@@ -78,10 +78,10 @@ class RunConfig(BaseModel):
     # —— Context Engine（design/07：B_input = B_context − B_output_reserve − B_safety；None = 不裁剪）——
     context_window_tokens: int | None = None
     output_reserve_tokens: int = Field(default=8192, ge=0)
-    # 近期完整窗口（v1.1 默认 30）：最近 N 个模型-工具轮次保留完整工具输出，更早
+    # 近期完整窗口（v1.2 默认 10；v1.1 曾为 30，单 repo 修复场景收窄）：最近 N 个模型-工具轮次保留完整工具输出，更早
     # 轮次确定性摘要为占位（Call/Result 配对完整保留）。0 = 关闭（v0 行为，
     # 可经显式参数复现；v1-48 评测使用 6）。
-    context_recent_full_turns: int = Field(default=30, ge=0)
+    context_recent_full_turns: int = Field(default=10, ge=0)
     # 命令权限档位（工具效率 v1）：strict（v0 白名单）/ coding_benchmark（追加
     # 受控只读命令 grep/rg/ls）。任务启动时确定并写入 Trace，模型运行期不可修改。
     command_policy: str = "strict"
@@ -89,6 +89,10 @@ class RunConfig(BaseModel):
     # DeepSeek API 为二值开关，无 effort 档位（reasoning_effort 参数被静默忽略，
     # 2026-11-09 探测实证）。写入 Trace；不同取值的结果不可跨配置合并。
     thinking: str = "disabled"
+    # —— 估算成本单价（USD / 百万 token；None = 不估算，cost_report.estimated_cost_usd=None）——
+    price_input_usd_per_m: float | None = None
+    price_cached_input_usd_per_m: float | None = None
+    price_output_usd_per_m: float | None = None
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
     review_enabled: bool = True
     max_reviewer_model_calls: int = Field(default=3, ge=1)
@@ -228,6 +232,9 @@ class RunResult(BaseModel):
     duration_ms: int
     review_status: str | None = None
     reviewed_patch_hash: str | None = None
+    # v1.1 全流程成本报告：分 actor（main/reviewer/test_agent）的 prompt/completion/
+    # cached_tokens/total + 全 Run 合计与估算成本。单价未配置时 estimated_cost_usd=None
+    cost_report: dict = {}
 
 
 class ReviewFinding(BaseModel):

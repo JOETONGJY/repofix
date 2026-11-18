@@ -52,11 +52,15 @@ class BudgetTracker:
     - 墙钟用注入 Clock。
     """
 
-    def __init__(self, config: RunConfig, clock: Clock):
+    def __init__(self, config: RunConfig, clock: Clock,
+                 external_tokens_fn: Callable[[], int] | None = None):
         self._config = config
         self._clock = clock
         self._started_at = clock.now()
         self._effective_model_limit = config.max_model_calls  # 阶段生效上限（修正阶段可放宽）
+        # Run 级统一台账挂点（v1.1 成本统一）：返回其他 actor（Reviewer/Test Agent）
+        # 已消耗的 token 总量，使 max_total_tokens 覆盖"整个 Run"而非仅 Main
+        self._external_tokens_fn = external_tokens_fn
         self.model_calls = 0  # 模型 API 请求尝试数（含失败）
         self.tool_calls = 0  # 工具请求数（预算口径）
         self.tool_executions = 0  # 实际执行次数（效率统计）
@@ -108,9 +112,15 @@ class BudgetTracker:
         self.check_aux_budget()
 
     def check_aux_budget(self) -> None:
-        """辅助预算（Token / 墙钟）——修正模式下独立于 max_model_calls 检查（评审 P0-2）。"""
-        if self._config.max_total_tokens is not None and self.total_tokens >= self._config.max_total_tokens:
-            raise BudgetViolation("max_total_tokens")
+        """辅助预算（Token / 墙钟）——修正模式下独立于 max_model_calls 检查（评审 P0-2）。
+
+        v1.1 统一台账：max_total_tokens 按"整个 Run"口径检查——Main 自身用量 +
+        external_tokens_fn（Reviewer/Test Agent 已消耗量）合计触顶即拒绝。
+        """
+        if self._config.max_total_tokens is not None:
+            external = self._external_tokens_fn() if self._external_tokens_fn else 0
+            if self.total_tokens + external >= self._config.max_total_tokens:
+                raise BudgetViolation("max_total_tokens")
         if self._wall_clock_exceeded():
             raise BudgetViolation("max_duration_seconds")
 

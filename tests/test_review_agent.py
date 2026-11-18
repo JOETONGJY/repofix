@@ -400,3 +400,51 @@ class TestCons01Budget:
         report = runner.review(make_review_request())
         assert report.status == "APPROVED"
         assert global_budget.tool_calls == 4  # 2 轮 × 2 只读调用计入全局
+
+
+class TestReviewerUsageAccounting:
+    """v1.1 成本报告：Reviewer 的 usage 必须被累积并可被 Run 报表读取。"""
+
+    def test_usage_accumulated_from_responses(self, registry):
+
+        responses = [
+            model_response(
+                "d1",
+                [make_tool_call("rv1", "submit_review", status="APPROVED",
+                                findings=[], summary="clean")],
+                usage={
+                    "prompt_tokens": 500,
+                    "completion_tokens": 60,
+                    "total_tokens": 560,
+                    "prompt_tokens_details": {"cached_tokens": 400},
+                },
+            ),
+        ]
+        runner = make_review_runner(responses, registry)
+        sink = {}
+        runner._usage_sink = sink
+        report = runner.review(make_review_request())
+
+        assert report.status == "APPROVED"
+        assert runner.token_usage["prompt"] == 500
+        assert runner.token_usage["completion"] == 60
+        assert runner.token_usage["total"] == 560
+        assert runner.token_usage["cached_tokens"] == 400
+        assert sink["reviewer_tokens"] == 560
+
+    def test_usage_without_details_no_crash(self, registry):
+
+        responses = [
+            model_response(
+                "d1",
+                [make_tool_call("rv1", "submit_review", status="APPROVED",
+                                findings=[], summary="clean")],
+                usage={"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
+            ),
+        ]
+        runner = make_review_runner(responses, registry)
+        sink = {}
+        runner._usage_sink = sink
+        runner.review(make_review_request())
+        assert runner.token_usage["total"] == 110
+        assert sink["reviewer_tokens"] == 110

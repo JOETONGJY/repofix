@@ -163,6 +163,8 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
             workspace.task_dir, instruction=task_spec.instruction)
 
     # ---- MVP v0.4 功能 B：Test Agent 阶段 1（生成 + 基线复现；独立测试工作区）----
+    # v1.1 统一台账：Reviewer/Test Agent 的用量经此 sink 汇入 max_total_tokens 检查
+    run_usage_sink: dict = {"reviewer_tokens": 0, "test_agent_tokens": 0}
     test_agent_note = None
     test_agent = None
     if config.test_agent_enabled:
@@ -178,6 +180,8 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
                 image=DEFAULT_IMAGE,
             )
             test_agent.run_baseline(report, repo_overview=extras.repo_overview_text)
+            run_usage_sink["test_agent_tokens"] = int(
+                test_agent.report.token_usage.get("total") or 0)
             extras.test_agent = test_agent
             # P2（评审）：基线复现成功时，以只读非权威摘要提供给 Main
             test_agent_note = test_agent.main_context_note()
@@ -230,6 +234,7 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
             workspace_executor=workspace.read_only_executor(),
             store=store, clock=reviewer_clock,
             global_tool_budget=runner.budget,
+            usage_sink=run_usage_sink,
         )
 
     runner = AgentRunner(
@@ -253,8 +258,13 @@ def _build_stack(task_spec: TaskSpec, config: RunConfig, run_id: str):
         target_unchanged=workspace_unchanged,
         review_runner_factory=review_runner_factory,
         reviewer_executor=workspace.read_only_executor(),
+        upstream_token_usage=dict(test_agent.report.token_usage) if test_agent is not None else None,
     )
     # 每次真实 API 尝试（含 Gateway 内部重试）原子检查并占用预算（评审 P0-2）
+    # v1.1 统一台账：max_total_tokens 按"整个 Run"口径检查（Main + Reviewer + Test Agent）
+    runner.budget.external_tokens_fn = lambda: int(
+        run_usage_sink.get("reviewer_tokens") or 0
+    ) + int(run_usage_sink.get("test_agent_tokens") or 0)
     adapter.on_attempt = runner.budget.reserve_model_attempt
     return runner, store, workspace, manager, handle, report, extras
 
@@ -364,15 +374,15 @@ def run(
              "也可显式指定（如 \"python -m pytest -q\" 或 \"auto\"）；"
              "无可用测试时最终验证将返回 INCONCLUSIVE"),
     output_dir: Path = typer.Option(Path("repofix-data"), "--output-dir", help="运行数据根目录"),
-    max_model_calls: int = typer.Option(30, "--max-model-calls", min=1),
-    max_tool_calls: int = typer.Option(100, "--max-tool-calls", min=1),
+    max_model_calls: int = typer.Option(50, "--max-model-calls", min=1),
+    max_tool_calls: int = typer.Option(150, "--max-tool-calls", min=1),
     timeout: int = typer.Option(1200, "--timeout", min=1, help="单任务执行时限（秒）"),
     review: bool = typer.Option(False, "--review/--no-review", help="启用 Read-only Review Agent"
                                 "（默认关闭 = 单 Agent Baseline；Experiment G 用不同取值运行）"),
     command_policy: str = typer.Option("strict", "--command-policy",
                                        help="命令权限档位：strict（v0 白名单）/ coding_benchmark"
                                             "（追加受控只读命令 grep/rg/ls）"),
-    context_recent_full_turns: int = typer.Option(30, "--context-recent-full-turns", min=0,
+    context_recent_full_turns: int = typer.Option(10, "--context-recent-full-turns", min=0,
                                                   help="Context 近期完整窗口：最近 N 轮保留完整"
                                                        "工具输出，更早轮次确定性摘要；0 = 关闭（v0）"),
     repo_overview: bool = typer.Option(False, "--repo-overview/--no-repo-overview",

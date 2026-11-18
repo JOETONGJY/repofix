@@ -316,8 +316,8 @@ class TestContextRecencyOption:
         assert result.exit_code == 0
         assert captured["config"].context_recent_full_turns == 6
 
-    def test_default_is_v1_1_recency_30(self, sample_repo, tmp_path):
-        """v1.1：默认 Recency 窗口 30（39 题实证校准）。"""
+    def test_default_is_recency_10(self, sample_repo, tmp_path):
+        """v1.2：默认 Recency 窗口 10（单 repo 修复场景收窄）。"""
         captured = {}
         result = invoke_with_stack(
             sample_repo, tmp_path,
@@ -326,7 +326,7 @@ class TestContextRecencyOption:
             captured=captured,
         )
         assert result.exit_code == 0
-        assert captured["config"].context_recent_full_turns == 30
+        assert captured["config"].context_recent_full_turns == 10
 
     def test_explicit_zero_reproduces_v0_behavior(self, sample_repo, tmp_path):
         """显式传 0 仍可复现 v0 行为（关闭 Recency），旧实验口径可复现。"""
