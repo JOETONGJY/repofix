@@ -67,8 +67,8 @@ def _trim_output(content: str, cap_chars: int, keep_tail: bool) -> str:
 
 # Context 层软预算系数（specs/03 V0.3：按工具类型的重要性差异调整，不做无差别截断）
 _SOFT_CAP_MULTIPLIERS = {
-    "read_file": 4,  # 源码内容价值高：允许更高配额，保留开头
-    "run_command": 1,  # Shell 输出冗长：严格软预算，保留错误尾部
+    "read_file": 5,  # 源码内容价值高（v1.1 基座 4000 → 20K 字符）：允许更高配额，保留开头
+    "run_command": 2,  # v1.1：基座×2 = 8K 字符（原 1×2000 过紧，测试日志错误尾部常被截）
     "search_code": 2,
     "list_files": 2,
 }

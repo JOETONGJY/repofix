@@ -29,7 +29,7 @@ _PERMANENT_STATUSES = {400, 401, 403, 404, 422}
 # 已验证模型的上下文窗口（design/07：B_context 必须是"明确声明并验证"的容量；
 # 未知模型不虚构容量——resolve 返回 None，需调用方显式配置）。数值以官方文档校准为准。
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
-    "deepseek-flash": 131072,  # 128K
+    "deepseek-flash": 1048576,  # 1M（V4.1-Flash-1017 实测支持，Yuki 300 题全量评测背书）
     "deepseek-v4-pro": 131072,  # 128K
 }
 

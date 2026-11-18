@@ -109,14 +109,16 @@ class TaskSpec(BaseModel):
     # 注：task_id 不放入 TaskSpec；脏工作区由 CLI 直接拒绝（design/01）
 
 class RunConfig(BaseModel):
-    """描述「怎么跑」。任务启动后固定，模型不得修改。默认值为初始工程值，待实验校准。"""
+    """描述「怎么跑」。任务启动后固定，模型不得修改。默认值为 v1.1 校准值
+    （2026-11-15，39 题实证：自然消耗 64 调用/513k token；deepseek-flash 实际
+    支持 1M 窗口且有前缀缓存——历史运行以显式参数与 Trace 记录保持可复现）。"""
     model_id: str
     prompt_version: str = "v0"
     # —— 预算（任一触顶即 BUDGET_EXCEEDED）——
-    max_model_calls: int = 30
-    max_tool_calls: int = 100
+    max_model_calls: int = 100
+    max_tool_calls: int = 150
     max_duration_seconds: int = 1200
-    max_total_tokens: int | None = None    # 启用需可靠计数，不能只信模型返回的最终 Usage
+    max_total_tokens: int | None = 800000  # 启用需可靠计数，不能只信模型返回的最终 Usage
     cost_limit_usd: float | None = None
     # —— 执行环境 ——
     command_timeout_seconds: int = 120
@@ -125,9 +127,12 @@ class RunConfig(BaseModel):
     model_retry_limit: int = 2             # 单次请求最多额外重试次数
     no_progress_repeat_threshold: int = 3
     no_progress_terminate_threshold: int = 5
-    tool_output_truncate_chars: int = 2000 # Context 层工具输出软预算（字符）；Dispatcher 另有 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
-    context_window_tokens: int | None = None  # 模型上下文窗口（design/07；None = 不裁剪）
-    output_reserve_tokens: int = 4096         # 本轮输出预留（B_output_reserve）
+    tool_output_truncate_chars: int = 4000 # Context 层工具输出软预算基座（字符；read_file ×5=20K，其余 ×2=8K）；Dispatcher 另有 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
+    context_window_tokens: int | None = None  # 模型上下文窗口（design/07；None = 不裁剪；deepseek-flash 声明 1M）
+    output_reserve_tokens: int = 8192         # 本轮输出预留（B_output_reserve）
+    context_recent_full_turns: int = 30      # 近期完整窗口：最近 N 轮完整、更早占位（0 = 关闭 = v0 行为）
+    command_policy: str = "strict"           # 命令权限档位：strict | coding_benchmark（v1 受控只读层）
+    thinking: str = "disabled"               # 思考模式：disabled | enabled（DeepSeek 二值开关）
     # —— Review Agent（design/02；review_enabled=False 退回单 Agent Baseline）——
     review_enabled: bool = True
     max_reviewer_model_calls: int = 3

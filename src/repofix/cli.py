@@ -372,7 +372,7 @@ def run(
     command_policy: str = typer.Option("strict", "--command-policy",
                                        help="命令权限档位：strict（v0 白名单）/ coding_benchmark"
                                             "（追加受控只读命令 grep/rg/ls）"),
-    context_recent_full_turns: int = typer.Option(0, "--context-recent-full-turns", min=0,
+    context_recent_full_turns: int = typer.Option(30, "--context-recent-full-turns", min=0,
                                                   help="Context 近期完整窗口：最近 N 轮保留完整"
                                                        "工具输出，更早轮次确定性摘要；0 = 关闭（v0）"),
     repo_overview: bool = typer.Option(False, "--repo-overview/--no-repo-overview",

@@ -425,7 +425,9 @@ class TestM32ReviewRegressions:
         assert "R" in read_content[:10]  # 读取：保留开头（头部正文）
         assert f"[sha256={'b' * 64}]" in read_content  # 元数据保留（P0-1）
         assert cmd_content.lstrip().startswith("[...context budget")  # 命令：严格配额 + 错误尾部
-        assert len(cmd_content) < 200
+        # v1.1 乘数 2×100 = 200 配额 + 标记 + exit 行
+        assert len(cmd_content) < 300
+        assert "context budget" in cmd_content  # 占位标记在（错误尾部策略）
         assert read_content.startswith("RRR")  # 不是命令输出的尾部策略
 
 

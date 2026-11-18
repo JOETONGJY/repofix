@@ -57,10 +57,12 @@ class RunConfig(BaseModel):
     model_id: str
     prompt_version: str = "v0"
     # —— 预算（任一触顶即 BUDGET_EXCEEDED）——
-    max_model_calls: int = Field(default=30, ge=1)
-    max_tool_calls: int = Field(default=100, ge=1)
+    # v1.1 默认校准（2026-11-15，39 题实证：自然消耗 64 调用/513k token，600k 档
+    # 28/39 触顶）：调用上限 100（自然收敛 ~38 + 难题余量）、token 上限 800k。
+    max_model_calls: int = Field(default=100, ge=1)
+    max_tool_calls: int = Field(default=150, ge=1)
     max_duration_seconds: int = Field(default=1200, ge=1)
-    max_total_tokens: int | None = None
+    max_total_tokens: int | None = 800000
     cost_limit_usd: float | None = None
     # —— 执行环境 ——
     command_timeout_seconds: int = Field(default=120, ge=1)
@@ -69,14 +71,17 @@ class RunConfig(BaseModel):
     model_retry_limit: int = Field(default=2, ge=0)
     no_progress_repeat_threshold: int = Field(default=3, ge=1)
     no_progress_terminate_threshold: int = Field(default=5, ge=1)
-    # Context 层工具输出软预算（字符）；Dispatcher 另有 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
-    tool_output_truncate_chars: int = Field(default=2000, ge=1)
+    # Context 层工具输出软预算基座（字符）；各工具按乘数放大（builder.py：
+    # read_file ×5 = 20K，run_command/search/list ×2 = 8K）。Dispatcher 另有
+    # 32 KiB UTF-8 字节硬上限（specs/03 V0.3）
+    tool_output_truncate_chars: int = Field(default=4000, ge=1)
     # —— Context Engine（design/07：B_input = B_context − B_output_reserve − B_safety；None = 不裁剪）——
     context_window_tokens: int | None = None
-    output_reserve_tokens: int = Field(default=4096, ge=0)
-    # 近期完整窗口（工具效率 v1）：最近 N 个模型-工具轮次保留完整工具输出，更早
-    # 轮次确定性摘要为占位（Call/Result 配对完整保留）。0 = 关闭（v0 行为）。
-    context_recent_full_turns: int = Field(default=0, ge=0)
+    output_reserve_tokens: int = Field(default=8192, ge=0)
+    # 近期完整窗口（v1.1 默认 30）：最近 N 个模型-工具轮次保留完整工具输出，更早
+    # 轮次确定性摘要为占位（Call/Result 配对完整保留）。0 = 关闭（v0 行为，
+    # 可经显式参数复现；v1-48 评测使用 6）。
+    context_recent_full_turns: int = Field(default=30, ge=0)
     # 命令权限档位（工具效率 v1）：strict（v0 白名单）/ coding_benchmark（追加
     # 受控只读命令 grep/rg/ls）。任务启动时确定并写入 Trace，模型运行期不可修改。
     command_policy: str = "strict"

@@ -377,8 +377,11 @@ def test_effective_preflight_summary_uses_runconfig_not_script_args():
     assert summary["context_recent_full_turns"] == 6
     assert summary["steps"] == "stage0-validated"  # 既有字段保留
 
-    # 默认值 = v0 行为（strict + 关闭窗口），不能被悄悄改写
+    # 默认值 = v1.1 口径（strict + Recency 30）；v0 行为经显式 0 复现
     default_summary = effective_preflight_summary(
         {}, RunConfig(model_id="m", review_enabled=False))
     assert default_summary["command_policy"] == "strict"
-    assert default_summary["context_recent_full_turns"] == 0
+    assert default_summary["context_recent_full_turns"] == 30
+    v0_summary = effective_preflight_summary(
+        {}, RunConfig(model_id="m", review_enabled=False, context_recent_full_turns=0))
+    assert v0_summary["context_recent_full_turns"] == 0

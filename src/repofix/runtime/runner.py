@@ -131,7 +131,7 @@ class AgentRunner:
         self._reviewed_patch_hash: str | None = None
         self._fix_mode = False
         self._fix_deadline = 0
-        self._token_usage: dict = {"prompt": 0, "completion": 0, "total": 0}
+        self._token_usage: dict = {"prompt": 0, "completion": 0, "total": 0, "cached_tokens": 0}
 
     # ---- 主循环 ----
 
@@ -626,4 +626,13 @@ class AgentRunner:
             if isinstance(value, int):
                 short = key.removesuffix("_tokens")
                 self._token_usage[short] = self._token_usage.get(short, 0) + value
+        # 缓存命中统计（v1.1）：DeepSeek 在 prompt_tokens_details.cached_tokens
+        # 报告本请求命中前缀缓存的输入量——大上下文策略的成本校准依据
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            cached = details.get("cached_tokens")
+            if isinstance(cached, int) and cached > 0:
+                self._token_usage["cached_tokens"] = (
+                    self._token_usage.get("cached_tokens", 0) + cached
+                )
         self._budget.record_usage(usage)  # Token 预算检查依据（缺失时预算侧不计）

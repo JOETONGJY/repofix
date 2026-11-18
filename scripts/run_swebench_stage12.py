@@ -66,7 +66,7 @@ def main() -> int:
     parser.add_argument("--keep-testbeds", action="store_true")
     parser.add_argument("--command-policy", default="strict", choices=("strict", "coding_benchmark"),
                         help="RepoFix v1 起使用 coding_benchmark（受控只读命令）")
-    parser.add_argument("--context-recent-full-turns", type=int, default=0,
+    parser.add_argument("--context-recent-full-turns", type=int, default=30,
                         help="Context 近期完整窗口（v1 建议 6；0 = 关闭 = v0 行为）")
     parser.add_argument("--thinking", default="disabled", choices=("disabled", "enabled"),
                         help="思考模式（v2 实验轴 = enabled；v0/v1 = disabled）")
