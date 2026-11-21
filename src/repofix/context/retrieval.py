@@ -60,6 +60,7 @@ TEST_AGENT_SCOPE = RetrievalScope(500, 6)
 WINDOW_CONTEXT_LINES = 40  # 锚定行号上下的窗口半径
 HEAD_FALLBACK_LINES = 60  # 无可靠位置时的文件头回退行数
 MERGE_GAP_LINES = 5  # 同文件窗口间隙 ≤ 此值时合并
+MAX_WINDOWS_PER_FILE = 3  # 单文件窗口数上限（内容命中 + 符号 API 上下文并存时截断）
 DEFAULT_MAX_WINDOW_CHARS = 6000
 DEFAULT_MAX_TOTAL_CHARS = 18000
 
@@ -197,7 +198,8 @@ class CodeRetriever:
             if tier > TIER_SYMBOL:
                 tier = TIER_SYMBOL
             score += SYMBOL_SCORE * len(matched_symbols)
-            symbol = matched_symbols[0]
+            # 窗口定位用最长命中（issue 命名的具体符号），而非字母序首个
+            symbol = max(matched_symbols, key=len)
             reasons.append(f"symbol match: {', '.join(matched_symbols)}")
 
         stem = basename_of(rel).rsplit(".", 1)[0].lower()
@@ -254,31 +256,37 @@ def build_code_windows(
     locations: list[CodeLocation],
     *,
     index: SymbolIndex | None = None,
+    keywords: list[str] | None = None,
     max_total_chars: int = DEFAULT_MAX_TOTAL_CHARS,
     max_window_chars: int = DEFAULT_MAX_WINDOW_CHARS,
 ) -> list[CodeWindow]:
-    """从候选位置提取代码窗口：锚定行号 ±40 / AST 函数范围 / 文件头回退。
+    """从候选位置提取代码窗口（优先级从强到弱）：
 
-    同文件多命中先合并重叠（含 ≤ MERGE_GAP_LINES 间隙），再按总字符预算
-    顺序渲染；预算耗尽后剩余位置丢弃——窗口数 < 位置数即发生了丢弃，
-    调用方可据此记录诊断。回退情况（无位置信号 / 行号越界）写入 reason。
+    锚定行号 ±40 → **具体词元内容命中行 ±15（v0.5.3.1）** → 失败测试函数 /
+    AST 符号范围（API 上下文）→ 文件头回退。同一文件的窗口先合并重叠
+    （含 ≤ MERGE_GAP_LINES 间隙），每文件最多 3 个，再按总字符预算顺序
+    渲染；预算耗尽后剩余位置丢弃（窗口数 < 位置数即发生了丢弃）。
+    回退与来源全部写入 reason（离线评估按此归因 Window Hit）。
     """
     root = Path(repo_root)
     spans_by_file: dict[str, list[tuple[int, int, str]]] = {}
     file_order: list[str] = []  # 按位置排名顺序渲染——窗口顺序 = 检索优先级
     for location in locations:
-        span = _window_span(location, index)
-        if span is None:
-            continue
         if location.path not in spans_by_file:
             file_order.append(location.path)
             spans_by_file[location.path] = []
-        spans_by_file[location.path].append(span)
+        span = _window_span(location, index)
+        if span is not None:
+            spans_by_file[location.path].append(span)
 
+    tokens = specific_tokens(keywords)
     windows: list[CodeWindow] = []
     budget = max_total_chars
     for path in file_order:
-        for start, end, reason in _merge_spans(spans_by_file[path]):
+        spans = list(spans_by_file[path])
+        if tokens:
+            spans.extend(_content_spans(root, path, tokens))
+        for start, end, reason in _merge_spans(spans)[:MAX_WINDOWS_PER_FILE]:
             if budget <= 0:
                 break
             window = _render_window(root, path, start, end, reason,
@@ -288,6 +296,42 @@ def build_code_windows(
         if budget <= 0:
             break
     return windows
+
+
+def specific_tokens(keywords: list[str] | None) -> list[str]:
+    """可用于内容定位的"具体词元"：含下划线（Python 特定标识符）或长度 ≥8
+    （store_cv_values / ridgeclassifiercv ✓；ridge/import/sklearn 这类泛词
+    不产生窗口——sklearn-10297 实证：它们把窗口拉去文件头）。"""
+    return [t for t in (keywords or []) if "_" in t or len(t) >= 8]
+
+
+CONTENT_HIT_LINES = 3  # 每文件最多取前 3 个内容命中行
+CONTENT_HIT_RADIUS = 15  # 内容命中行的窗口半径
+
+
+def _content_spans(root: Path, path: str, tokens: list[str]) -> list[tuple[int, int, str]]:
+    """具体词元在文件文本中的命中行 → 候选窗口（前 3 个，±15 行）。"""
+    if not tokens:
+        return []
+    try:
+        raw = (root / path).read_bytes()
+    except OSError:
+        return []
+    if b"\x00" in raw[:8192]:
+        return []
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    lowered_tokens = [t.lower() for t in tokens]
+    spans: list[tuple[int, int, str]] = []
+    for number, line in enumerate(lines, start=1):
+        lowered_line = line.lower()
+        matched = next((t for t in lowered_tokens if t in lowered_line), None)
+        if matched is None:
+            continue
+        spans.append((max(1, number - CONTENT_HIT_RADIUS), number + CONTENT_HIT_RADIUS,
+                      f"content hit line {number} ({matched})"))
+        if len(spans) >= CONTENT_HIT_LINES:
+            break
+    return spans
 
 
 def _window_span(location: CodeLocation,

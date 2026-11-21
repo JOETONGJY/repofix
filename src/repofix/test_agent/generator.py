@@ -92,6 +92,7 @@ def select_issue_files(
             for rel in retriever.structural_fallback(max_files)
         ]
     windows = build_code_windows(root, locations, index=retriever.index,
+                                 keywords=result.keywords,
                                  max_total_chars=MAX_SNIPPET_CHARS * max_files,
                                  max_window_chars=MAX_SNIPPET_CHARS)
     return [(window.path, window.text) for window in windows]

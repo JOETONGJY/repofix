@@ -195,8 +195,10 @@ class TestConsumerCompat:
 from repofix.context.retrieval import (  # noqa: E402
     CodeLocation,
     CodeWindow,
+    RetrievalResult,
     build_code_windows,
 )
+from repofix.context.symbol_index import build_symbol_index  # noqa: E402
 
 
 class TestCodeWindows:
@@ -375,3 +377,102 @@ def test_content_score_capped(tmp_path):
     vendor = next(loc for loc in result.locations if "vendor" in loc.path)
     assert target.score > vendor.score  # 符号层命中应稳压封顶后的内容分
     assert target.tier == TIER_SYMBOL
+
+
+class TestContentHitWindows:
+    """v0.5.3.1：具体词元的内容命中行参与窗口定位（sklearn-10297 错位的修法）。"""
+
+    def _sklearn_like_repo(self, tmp_path):
+        """类 RidgeClassifierCV 定义在后（1250 行附近），gold 修改在前另一个类
+        的 docstring（1212 行，含 issue 命名的 store_cv_values 参数）。"""
+        filler = "\n".join(f"filler_{i} = {i}" for i in range(1, 1200))
+        head = (
+            'class RidgeCV:\n'
+            '    """\n'
+            '    Parameters\n'
+            '    ----------\n'
+            '    store_cv_values : boolean, default=False\n'
+            '        Flag indicating if the cross-validation values should be stored.\n'
+            '    """\n'
+        )
+        later = "\n".join(f"more_{i} = {i}" for i in range(1, 40))
+        tail = 'class RidgeClassifierCV:\n    def fit(self, X, y):\n        return X\n'
+        return make_plain_repo(tmp_path, {"sklearn/ridge.py": f"{filler}\n{head}{later}\n{tail}"})
+
+    def test_content_window_covers_named_parameter_region(self, tmp_path):
+        root = self._sklearn_like_repo(tmp_path)
+        index = build_symbol_index(root)
+        locations = [CodeLocation(path="sklearn/ridge.py", tier=1, score=8,
+                                  symbol="RidgeClassifierCV", reasons=["symbol match"])]
+        windows = build_code_windows(root, locations, index=index,
+                                     keywords=["store_cv_values", "ridgeclassifiercv"],
+                                     max_window_chars=6000)
+        reasons = [w.reason for w in windows]
+        assert any("content hit" in r for r in reasons), reasons
+        content_window = next(w for w in windows if "content hit" in w.reason)
+        assert "store_cv_values" in content_window.text
+        # API 上下文窗口（符号范围）与内容窗口并存
+        assert any("RidgeClassifierCV" in w.text for w in windows)
+
+    def test_content_window_overlaps_gold_range(self, tmp_path):
+        """端到端验收：sklearn-10297 的失败模式——gold 在 1212-1230，符号窗口
+        错位，内容命中行窗口必须盖住 gold 区间。"""
+        from repofix.evaluation.retrieval_eval import evaluate_retrieval, parse_gold_patch
+
+        root = self._sklearn_like_repo(tmp_path)
+        index = build_symbol_index(root)
+        gold_diff = ("diff --git a/sklearn/ridge.py b/sklearn/ridge.py\n"
+                     "--- a/sklearn/ridge.py\n+++ b/sklearn/ridge.py\n"
+                     "@@ -1212,3 +1212,3 @@\n"
+                     "-        Flag indicating if the cross-validation values\n"
+                     "+        Flag indicating if the cross-val values are stored\n")
+        labels = parse_gold_patch("t", gold_diff)
+        locations = [CodeLocation(path="sklearn/ridge.py", tier=1, score=8,
+                                  symbol="RidgeClassifierCV", reasons=["symbol match"])]
+        windows = build_code_windows(root, locations, index=index,
+                                     keywords=["store_cv_values", "ridgeclassifiercv"])
+        result = RetrievalResult(locations=locations, anchored_matched=[], keywords=[],
+                                 symbol_hits={}, scanned_files=["sklearn/ridge.py"],
+                                 scan_truncated=False)
+        record = evaluate_retrieval(labels, result, windows)
+        assert record.file_hit_any is True
+        assert record.window_hit_files == ["sklearn/ridge.py"], record.to_dict()
+
+    def test_short_generic_tokens_do_not_create_windows(self, tmp_path):
+        root = make_plain_repo(tmp_path, {"m.py": "x = 1\n" * 100})
+        locations = [CodeLocation(path="m.py", tier=1, score=8, symbol="m",
+                                  reasons=["symbol match"])]
+        windows = build_code_windows(root, locations, index=build_symbol_index(root),
+                                     keywords=["fit", "run", "use"])
+        assert all("content hit" not in w.reason for w in windows)
+
+    def test_no_content_spans_without_keywords(self, tmp_path):
+        root = make_plain_repo(tmp_path, {"m.py": "store_cv_values = 1\n"})
+        locations = [CodeLocation(path="m.py", tier=2, score=5, reasons=["kw"])]
+        windows = build_code_windows(root, locations)  # 不传 keywords → 向后兼容
+        assert all("content hit" not in w.reason for w in windows)
+
+    def test_match_line_cap_three_per_file(self, tmp_path):
+        body = "\n".join(f"use store_cv_values_{i} here" for i in range(1, 8))
+        root = make_plain_repo(tmp_path, {"m.py": body})
+        locations = [CodeLocation(path="m.py", tier=2, score=5, reasons=["kw"])]
+        windows = build_code_windows(root, locations, keywords=["store_cv_values"],
+                                     max_window_chars=100000)
+        content_windows = [w for w in windows if "content hit" in w.reason]
+        assert len(content_windows) <= 3
+
+
+def test_specific_tokens_rule():
+    """下划线或 ≥8 字符才算具体词元；短泛词（ridge/import）不产生内容窗口。"""
+    from repofix.context.retrieval import specific_tokens
+
+    assert specific_tokens(["store_cv_values", "ridgeclassifiercv", "ridge",
+                            "import", "sklearn"]) == ["store_cv_values", "ridgeclassifiercv"]
+
+
+def test_symbol_window_targets_longest_named_symbol(billing_repo):
+    """位置命中多个符号时，窗口用最长（issue 最具体）的符号。"""
+    result = CodeRetriever(billing_repo, TEST_AGENT_SCOPE).rank(
+        "get_cached_total returns stale value after update_order")
+    cache_loc = next(loc for loc in result.locations if loc.path == "cache/order_cache.py")
+    assert cache_loc.symbol == "get_cached_total"  # 15 > update_order(12)

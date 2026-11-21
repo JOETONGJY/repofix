@@ -91,6 +91,7 @@ def evaluate_variant(instance_id: str, variant: str, testbed_dir: Path,
     if variant == "kernel_windows":
         windows = build_code_windows(testbed_dir, result.locations[:top_k],
                                      index=retriever.index,
+                                     keywords=result.keywords,
                                      max_total_chars=window_budget)
     else:
         # 文件头窗口（head fallback 语义与 v0.5.2 的无信号回退一致）
