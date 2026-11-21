@@ -17,17 +17,10 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from repofix.context.issue_signals import extract_anchored_locations, match_anchored_to_repo
-from repofix.context.repo_overview import (
-    basename_of,
-    is_sensitive_path,
-    tokenize_issue,
-)
 from repofix.contracts import AgentActor, EventType, ModelRequest
 from repofix.gateway.client import ModelClient, ModelClientError
 from repofix.state.store import SQLiteEventStore
 from repofix.test_agent.schemas import TestCandidate
-from repofix.workspace.docker_workspace import iter_workspace_files
 
 # 生成输入预算（任务书 §6：最多 2–3 个文件，不发送整个仓库）
 MAX_SNIPPET_FILES = 3
@@ -72,52 +65,23 @@ class TestGenerationResult:
 def select_issue_files(
     repo_root, instruction: str, max_files: int = MAX_SNIPPET_FILES
 ) -> list[tuple[str, str]]:
-    """按 Issue 关键词与文件名/路径简单匹配选出候选文件并读取有界内容。
+    """按共享检索内核（v0.5.1）选出候选文件并读取有界内容。
 
-    确定性：同基线同输入 ⇒ 同结果（排序 + 平局按路径）。敏感文件（.env/密钥）
-    绝不读取；无关键词命中时退化为浅层源码文件。
+    评分委托 CodeRetriever（锚定 > 符号名 > 关键词 分层排序）；扫描范围
+    保留 Test Agent 自己的召回面（500 文件/深度 6，评审约定 1）。确定性：
+    同基线同输入 ⇒ 同结果。敏感文件（.env/密钥）绝不读取；无信号命中时
+    退化为浅层源码文件。
     """
     from pathlib import Path
 
-    root = Path(repo_root)
-    found, _ = iter_workspace_files(root, 6, 500)
-    resolved_root = root.resolve()
-    rels: list[str] = []
-    for path in found:
-        try:
-            rel = path.relative_to(resolved_root).as_posix()
-        except ValueError:
-            continue
-        if path.suffix != ".py" or is_sensitive_path(rel):
-            continue
-        if basename_of(rel) in ("conftest.py", "setup.py"):
-            continue
-        rels.append(rel)
-    rels.sort()
+    from repofix.context.retrieval import TEST_AGENT_SCOPE, CodeRetriever
 
-    keywords = tokenize_issue(instruction)
-    # 锚定信号（v0.5）：Issue 中的 traceback/失败身份/路径提及优先于关键词猜测
-    anchored_files = {
-        rel_file for _, rel_file
-        in match_anchored_to_repo(extract_anchored_locations(instruction), rels)
-    }
-    scored: list[tuple[int, str]] = []
-    for rel in rels:
-        stem = basename_of(rel).rsplit(".", 1)[0].lower()
-        parts = [seg.lower() for seg in rel.split("/")[:-1]]
-        score = 0
-        for kw in keywords:
-            if kw in stem:
-                score += 5
-            if kw in parts:
-                score += 2
-        if rel in anchored_files:
-            score += 25
-        scored.append((score, rel))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    picked = [rel for score, rel in scored if score > 0][:max_files]
+    root = Path(repo_root)
+    retriever = CodeRetriever(root, TEST_AGENT_SCOPE)
+    result = retriever.rank(instruction)
+    picked = [loc.path for loc in result.locations if loc.score > 0][:max_files]
     if not picked:  # 无命中：退化取浅层源码（保持确定性）
-        picked = sorted(rels, key=lambda rel: (rel.count("/"), rel))[:max_files]
+        picked = retriever.structural_fallback(max_files)
 
     snippets: list[tuple[str, str]] = []
     for rel in picked:

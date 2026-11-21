@@ -14,12 +14,8 @@ import hashlib
 import re
 from pathlib import Path
 
-from repofix.context.issue_signals import (
-    AnchoredLocation,
-    extract_anchored_locations,
-    match_anchored_to_repo,
-)
-from repofix.context.symbol_index import SymbolEntry, SymbolIndex, build_symbol_index
+from repofix.context.issue_signals import AnchoredLocation
+from repofix.context.symbol_index import SymbolEntry, SymbolIndex
 from repofix.workspace.docker_workspace import iter_workspace_files
 
 DEFAULT_MAX_FILES = 200
@@ -196,57 +192,6 @@ def _find_entry_points(rel_paths: list[str]) -> list[str]:
     return sorted(entries)[:5]
 
 
-def _score_candidate(rel: str, repo_root: Path, keywords: list[str],
-                     content_cache: dict[str, str], anchored_files: set[str] | None = None) -> int:
-    """候选文件评分：锚定位置 > 文件名 / 路径段命中 > 有界内容命中。
-
-    锚定（Traceback/失败身份/路径提及）+25：Issue 白给的定位信号优先于
-    关键词猜测（关键词相关不一定行为相关）。确定性平局按路径排序。
-    """
-    name = basename_of(rel).lower()
-    stem = name.rsplit(".", 1)[0]
-    parts = [seg.lower() for seg in rel.replace("\\", "/").split("/")[:-1]]
-    lowered = {kw: kw for kw in keywords}
-    score = 0
-    for kw in keywords:
-        if kw in stem:
-            score += 5
-        if kw in parts:
-            score += 2
-    if score == 0 and rel.endswith(tuple(_TEXT_CONTENT_SUFFIXES)) and not is_sensitive_path(rel):
-        if rel not in content_cache:
-            content_cache[rel] = _read_bounded(repo_root / rel).lower()
-        content = content_cache[rel]
-        for kw in keywords:
-            if lowered[kw] in content:
-                score += 1
-    if anchored_files and rel in anchored_files:
-        score += 25
-    return score
-
-
-def _select_candidate_files(repo_root: Path, rel_paths: list[str], issue_text: str,
-                            max_candidates: int,
-                            anchored_files: set[str] | None = None) -> list[str]:
-    """Candidate files：锚定位置 > Issue 关键词与文件名/路径匹配；无信号时
-    退化为确定性的源码文件顺序（浅层 .py 优先）。不实现语义检索。"""
-    py_like = [
-        rel for rel in rel_paths
-        if rel.endswith(".py") and not is_sensitive_path(rel)
-        and basename_of(rel) not in ("conftest.py", "setup.py")
-    ]
-    if not issue_text.strip():
-        return sorted(py_like, key=lambda rel: (rel.count("/"), rel))[:max_candidates]
-    keywords = tokenize_issue(issue_text)
-    if not keywords and not anchored_files:
-        return sorted(py_like, key=lambda rel: (rel.count("/"), rel))[:max_candidates]
-    cache: dict[str, str] = {}
-    scored = [(_score_candidate(rel, repo_root, keywords, cache, anchored_files), rel)
-              for rel in py_like]
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [rel for score, rel in scored if score > 0][:max_candidates]
-
-
 def _candidate_annotations(rel: str, index: "SymbolIndex",
                            anchored_matched: list[tuple[AnchoredLocation, str]]) -> list[str]:
     """候选文件的符号/锚定/引用标注（Level 2；每类都有界，确定性顺序）。"""
@@ -289,10 +234,10 @@ def build_repo_overview(
     """生成确定性仓库概览文本。
 
     参数即全部预算上限（文件数 / 目录深度 / 输出字符数 / 候选文件数）。
-    issue_text 非空时：Traceback / 失败身份 / 路径提及作为锚定位置（最高
-    优先级排序信号），Candidate files 按 锚定 > 关键词 匹配，并附 AST 符号
-    标注（v0.5 Level 2）。生成失败由调用方捕获处理（本函数只做文件系统
-    读取与 ast.parse，不执行仓库代码）。
+    issue_text 非空时：候选排序委托共享 Code Retrieval Layer（v0.5.1，
+    锚定/符号/关键词分层评分），Candidate files 附锚定与 AST 符号标注
+    （Level 2）。Overview 保持纯导航——不注入源码窗口，Main 的代码核查
+    走 find_symbol/search_code/read_file。生成失败由调用方捕获处理。
     """
     repo_root = Path(repo_root)
     if not repo_root.is_dir():
@@ -301,15 +246,14 @@ def build_repo_overview(
     rel_paths, truncated = scan_repo_files(repo_root, max_files, max_depth)
     project = repo_root.resolve().name
 
-    # 锚定信号（Traceback-Aware Retrieval，v0.5）
-    anchored_matched: list[tuple[AnchoredLocation, str]] = []
-    anchored_files: set[str] = set()
-    if issue_text.strip():
-        anchored_matched = match_anchored_to_repo(
-            extract_anchored_locations(issue_text), rel_paths)
-        anchored_files = {f for _, f in anchored_matched}
-    # 符号索引（Level 2；默认内部构建，测试可注入预构建索引）
-    index = symbol_index if symbol_index is not None else build_symbol_index(repo_root)
+    # 共享检索内核（v0.5.1）：函数级导入避免模块循环（retrieval 顶层依赖本模块）
+    from repofix.context.retrieval import CodeRetriever, RetrievalScope
+
+    retriever = CodeRetriever(repo_root, RetrievalScope(max_files, max_depth),
+                              index=symbol_index)
+    result = retriever.rank(issue_text)
+    index = retriever.index
+    anchored_matched = result.anchored_matched
 
     lines: list[str] = ["Repository Overview", "", f"Project: {project}", "", "Structure:"]
     structure = _render_structure(rel_paths, max_depth)
@@ -343,8 +287,10 @@ def build_repo_overview(
         lines.append("Entry points:")
         lines.extend(f"  {rel}" for rel in entries)
 
-    candidates = _select_candidate_files(repo_root, rel_paths, issue_text, max_candidates,
-                                         anchored_files=anchored_files)
+    candidates = [loc.path for loc in result.locations[:max_candidates]]
+    if not candidates:
+        # 无有效信号：保持既有行为——浅层源码回退（Candidate files 段落始终存在）
+        candidates = retriever.structural_fallback(max_candidates)
     if candidates:
         lines.append("")
         lines.append("Candidate files:")
