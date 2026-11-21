@@ -89,7 +89,7 @@ class CodeRetriever:
 
     def __init__(self, repo_root, scope: RetrievalScope | None = None, *,
                  index: SymbolIndex | None = None, signals=("anchor", "symbol", "keyword")):
-        root = Path(repo_root)
+        root = Path(repo_root).resolve()  # 相对路径会让 scan/index 的 rel 计算全部失败
         if not root.is_dir():
             raise NotADirectoryError(f"repository root does not exist: {root}")
         self._root = root

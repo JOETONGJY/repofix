@@ -171,7 +171,7 @@ def build_symbol_index(
     max_file_bytes: int = MAX_FILE_BYTES,
 ) -> SymbolIndex:
     """构建有界符号索引。任何单文件失败都不影响整体（跳过并计数）。"""
-    repo_root = Path(repo_root)
+    repo_root = Path(repo_root).resolve()  # 相对路径会让 relative_to 全部失败
     if not repo_root.is_dir():
         raise NotADirectoryError(f"repository root does not exist: {repo_root}")
     # 函数级导入：repo_overview 顶层导入本模块，模块级反向导入会形成循环

@@ -111,7 +111,7 @@ def scan_repo_files(
     复用 iter_workspace_files：目录剪枝（.git/.venv/node_modules/构建缓存）与
     符号链接越界防护都在该层实现。输出按路径排序保证确定性。
     """
-    root = Path(repo_root)
+    root = Path(repo_root).resolve()  # 相对路径会让 relative_to 全部失败
     found, truncated = iter_workspace_files(root, max_depth, max_files)
     resolved_root = root.resolve()
     rels: list[str] = []
