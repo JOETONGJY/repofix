@@ -19,11 +19,15 @@ from pathlib import Path
 
 from repofix.workspace.docker_workspace import iter_workspace_files
 
-DEFAULT_INDEX_MAX_FILES = 300
+DEFAULT_INDEX_MAX_FILES = 1500  # 索引预算只计 .py 文件（此前 300 且把非源码也计入——
+# 字母序 DFS 会让 doc//examples/ 先吃掉预算，真实仓库的源码树反而进不了索引）
 MAX_FILE_BYTES = 256 * 1024  # 超大源文件跳过（索引用途不需要全文）
 MAX_SYMBOLS_PER_FILE = 200
-MAX_TOTAL_SYMBOLS = 5000
-MAX_IMPORT_EDGES = 2000
+MAX_TOTAL_SYMBOLS = 20000
+MAX_IMPORT_EDGES = 8000
+_SCAN_FILE_CAP = 8000  # 预扫描文件上限（含非源码；索引预算只对 .py 计数）
+# 预算紧张时最后才索引的目录（真实仓库的文档/示例/基准，源码树优先）
+_INDEX_LATER_PREFIXES = ("doc/", "docs/", "examples/", "benchmarks/", "test/", "tests/")
 
 
 @dataclass
@@ -51,12 +55,16 @@ class SymbolIndex:
     truncated: bool = False
 
     def lookup(self, name: str) -> list[SymbolEntry]:
-        """按短名或限定名（含后缀）查定义；命中按 (file, line) 排序保证确定性。"""
+        """按短名或限定名（含后缀）查定义；大小写不敏感（issue 词元经
+        tokenize 已小写，CamelCase 定义名必须仍可命中）；命中按 (file, line)
+        排序保证确定性。"""
+        lowered = name.lower()
         entries: list[SymbolEntry] = []
         for key_entries in self.symbols.values():
             for entry in key_entries:
-                if (entry.name == name or entry.qualname == name
-                        or entry.qualname.endswith("." + name)):
+                if (entry.name.lower() == lowered
+                        or entry.qualname.lower() == lowered
+                        or entry.qualname.lower().endswith("." + lowered)):
                     entries.append(entry)
         entries.sort(key=lambda e: (e.file, e.line, e.qualname))
         return entries
@@ -178,20 +186,27 @@ def build_symbol_index(
     from repofix.context.repo_overview import is_sensitive_path
 
     index = SymbolIndex()
-    found, truncated = iter_workspace_files(repo_root, 8, max_files)
-    index.truncated = truncated
+    found, _ = iter_workspace_files(repo_root, 10, _SCAN_FILE_CAP)
     total_symbols = MAX_TOTAL_SYMBOLS
     total_edges = MAX_IMPORT_EDGES
+    # 只对 .py 计预算；文档/示例/基准目录排序靠后（源码树优先进入预算）
+    py_rels: list[str] = []
     for path in found:
-        if total_symbols <= 0 and total_edges <= 0:
-            index.truncated = True
-            break
         try:
-            rel = path.relative_to(repo_root.resolve()).as_posix()
+            rel = path.relative_to(repo_root).as_posix()
         except ValueError:
             continue
         if path.suffix != ".py" or is_sensitive_path(rel):
             continue
+        py_rels.append(rel)
+    py_rels.sort(key=lambda rel: (rel.startswith(_INDEX_LATER_PREFIXES), rel))
+    index.truncated = len(py_rels) > max_files
+    indexed = 0
+    for rel in py_rels:
+        if indexed >= max_files or (total_symbols <= 0 and total_edges <= 0):
+            index.truncated = True
+            break
+        path = repo_root / rel
         try:
             if path.stat().st_size > max_file_bytes:
                 index.files_skipped_size += 1
@@ -202,7 +217,11 @@ def build_symbol_index(
         if b"\x00" in raw[:8192]:
             continue  # 二进制
         try:
-            tree = ast.parse(raw.decode("utf-8", errors="replace"))
+            import warnings
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # vendored 文件的非法转义告警不是检索信号
+                tree = ast.parse(raw.decode("utf-8", errors="replace"))
         except SyntaxError:
             index.files_skipped_syntax += 1
             continue
@@ -219,6 +238,7 @@ def build_symbol_index(
                 for target in targets:
                     index.imported_by.setdefault(target, []).append(rel)
         index.files_indexed += 1
+        indexed += 1
     # 确定性：所有列表排序
     for entries in index.symbols.values():
         entries.sort(key=lambda e: (e.file, e.line, e.qualname))

@@ -143,3 +143,32 @@ def test_summarize_rates():
     assert summary["window_hit@3"] == 0.5
     assert summary["function_hit@3"] == 0.5
     assert summary["scan_miss_rate"] == 0.5
+
+
+def test_symbol_lookup_case_insensitive(tmp_path):
+    """issue 词元小写后仍命中 CamelCase 定义（sklearn-10297 一题暴露的真 bug）。"""
+    from repofix.context.symbol_index import build_symbol_index
+
+    root = make_plain_repo(tmp_path, {"ridge.py": "class RidgeClassifierCV:\n    def fit(self):\n        pass\n"})
+    index = build_symbol_index(root)
+    assert [e.qualname for e in index.lookup("ridgeclassifiercv")] == ["RidgeClassifierCV"]
+
+
+def test_class_docstring_labeled_class_not_module_level(tmp_path):
+    """类 docstring 范围：标签为 class:<name>，不算 Function Hit 也不误标模块级。"""
+    from repofix.context.symbol_index import build_symbol_index
+
+    root = make_plain_repo(tmp_path, {
+        "ridge.py": ("\n" * 9 + 'class RidgeCV:\n    """doc line"""\n' + "    pass\n" * 5),
+    })
+    index = build_symbol_index(root)
+    labels = parse_gold_patch("tc", "diff --git a/ridge.py b/ridge.py\n"
+                              "--- a/ridge.py\n+++ b/ridge.py\n"
+                              "@@ -11,1 +11,1 @@\n- doc line\n+ doc changed\n")
+    mapped = map_ranges_to_symbols(labels.ranges, index)
+    label = mapped["ridge.py"][0][2]
+    assert label.startswith("class:RidgeCV")
+    spans = {p: [(s, e) for (s, e, lab) in ents
+                 if lab != "module-level" and not lab.startswith("class:")]
+             for p, ents in mapped.items()}
+    assert spans["ridge.py"] == []  # 类级修改不进 Function Hit 分母

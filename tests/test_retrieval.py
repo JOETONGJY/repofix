@@ -318,3 +318,60 @@ class TestCodeWindows:
     def test_window_render_type(self):
         window = CodeWindow(path="p.py", start_line=1, end_line=2, text="# p.py")
         assert isinstance(window, CodeWindow)
+
+
+class TestSymbolNoiseGuards:
+    """sklearn-10297 一题暴露的两类符号层噪声（评审后修复）。"""
+
+    def test_generic_token_dropped_when_defined_in_many_files(self, tmp_path):
+        root = make_plain_repo(tmp_path, {f"m{i}/mod.py": "def fit(self):\n    pass\n"
+                                          for i in range(7)})
+        result = CodeRetriever(root, TEST_AGENT_SCOPE).rank("fit is broken")
+        assert "fit" not in result.symbol_hits
+
+    def test_specific_token_still_hits(self, billing_repo):
+        result = CodeRetriever(billing_repo, TEST_AGENT_SCOPE).rank("get_cached_total fails")
+        assert "get_cached_total" in result.symbol_hits
+
+    def test_dunder_tokens_never_hit(self, tmp_path):
+        root = make_plain_repo(tmp_path, {f"m{i}/cls.py": "class C:\n    def __init__(self):\n        pass\n"
+                                          for i in range(3)})
+        result = CodeRetriever(root, TEST_AGENT_SCOPE).rank("__init__ is broken")
+        assert result.symbol_hits == {}
+
+
+class TestIndexSourceFirst:
+    def test_budget_tight_source_files_win_over_docs(self, tmp_path):
+        """预算只计 .py 且源码树优先——doc//examples/ 最后进索引。"""
+        from repofix.context.symbol_index import build_symbol_index
+
+        files = {
+            "doc/guide.py": "def doc_helper():\n    pass\n",
+            "examples/demo.py": "def demo_helper():\n    pass\n",
+            "src/core.py": "def core_helper():\n    pass\n",
+            "src/util.py": "def util_helper():\n    pass\n",
+            "src/extra.py": "def extra_helper():\n    pass\n",
+        }
+        root = make_plain_repo(tmp_path, files)
+        index = build_symbol_index(root, max_files=3)  # 预算 3 个 .py
+        assert index.symbols_in_file("src/core.py")  # 源码先进
+        assert index.symbols_in_file("src/util.py")
+        assert index.symbols_in_file("src/extra.py")
+        assert index.symbols_in_file("doc/guide.py") == []  # 预算被源码占满
+        assert index.truncated is True
+
+
+def test_content_score_capped(tmp_path):
+    """内容匹配封顶：文本肥大的 vendor 文件不能再靠几十个撞词压过 gold 文件。"""
+    root = make_plain_repo(tmp_path, {
+        "vendor/pyparsing_like.py": " ".join(["parameter", "numpy", "import", "size",
+                                              "alphas", "fit", "cv", "values",
+                                              "store", "error", "database"]) * 3 + "\n",
+        "src/real_fix_target.py": "class RidgeClassifierCV:\n    pass\n",
+    })
+    result = CodeRetriever(root, TEST_AGENT_SCOPE).rank(
+        "store_cv_values parameter error on RidgeClassifierCV")
+    target = next(loc for loc in result.locations if "real_fix_target" in loc.path)
+    vendor = next(loc for loc in result.locations if "vendor" in loc.path)
+    assert target.score > vendor.score  # 符号层命中应稳压封顶后的内容分
+    assert target.tier == TIER_SYMBOL

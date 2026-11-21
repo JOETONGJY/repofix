@@ -34,6 +34,10 @@ TIER_SYMBOL = 1  # Issue 词元命中 AST 符号定义名（行为名相关但�
 TIER_KEYWORD = 2  # 文件名/目录/内容关键词命中
 TIER_STRUCTURAL = 3  # 无信号回退（浅层优先，仅消费者显式请求时生成）
 
+SYMBOL_TOKEN_MAX_FILES = 5  # 定义散布超过此文件数 = 泛化符号（fit/model 类），不作为信号
+KEYWORD_CONTENT_MAX = 3  # 内容匹配是最弱信号：贡献封顶（sklearn-10297 实证：无上限时
+# vendored 文件靠几十个英文词撞分压过真正的 gold 文件）
+
 ANCHOR_SCORE = 25
 SYMBOL_SCORE = 8
 KEYWORD_STEM_SCORE = 5
@@ -139,9 +143,14 @@ class CodeRetriever:
         symbol_hits: dict[str, list[str]] = {}
         if self._signals & {"symbol"}:
             for token in keywords:
+                if token.startswith("__"):
+                    continue  # dunder 噪声（__init__ 之类人人都定义）
                 files = sorted({entry.file for entry in self._index.lookup(token)})
-                if files:
-                    symbol_hits[token] = files
+                if not files:
+                    continue
+                if len(files) > SYMBOL_TOKEN_MAX_FILES:
+                    continue  # 泛化符号：定义散布太广，无定位价值（sklearn-10297 实证）
+                symbol_hits[token] = files
 
         locations: list[CodeLocation] = []
         for rel in self._py_candidates:
@@ -205,8 +214,10 @@ class CodeRetriever:
         elif rel.endswith(tuple(_TEXT_CONTENT_SUFFIXES)):
             content_hits = self._content_keywords(rel, keywords)
             if content_hits:
-                score += KEYWORD_CONTENT_SCORE * len(content_hits)
-                reasons.append("content keywords: " + ", ".join(content_hits[:4]))
+                credited = min(len(content_hits), KEYWORD_CONTENT_MAX)
+                score += KEYWORD_CONTENT_SCORE * credited
+                reasons.append(f"content keywords (+{credited}): "
+                               + ", ".join(content_hits[:4]))
 
         if tier is not TIER_KEYWORD or score > 0:
             return CodeLocation(

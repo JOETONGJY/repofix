@@ -106,11 +106,14 @@ def map_ranges_to_symbols(ranges: dict[str, list[tuple[int, int]]],
             containing = [
                 entry for entry in symbols
                 if entry.line <= start and (entry.end_line or entry.line) >= end
-                and entry.kind in ("function", "method")
+                and entry.kind in ("function", "method", "class")
             ]
             if containing:
                 best = min(containing, key=lambda e: (e.end_line or e.line) - e.line)
-                file_labels.append((start, end, best.qualname))
+                # 类级包含（如类 docstring 修改）标注 kind 前缀——不冒充函数级
+                label = best.qualname if best.kind in ("function", "method") \
+                    else f"class:{best.qualname}"
+                file_labels.append((start, end, label))
             else:
                 file_labels.append((start, end, "module-level"))
         labels[path] = file_labels
@@ -172,7 +175,8 @@ def evaluate_retrieval(labels: GoldLabels, result, windows, *, top_k: int = 3) -
     # 窗口与 gold 行范围重叠
     function_labels = labels.labels or map_ranges_to_symbols(labels.ranges, None)
     gold_function_spans = {
-        path: [(s, e) for (s, e, label) in entries if label != "module-level"]
+        path: [(s, e) for (s, e, label) in entries
+               if label != "module-level" and not label.startswith("class:")]
         for path, entries in function_labels.items()
     }
     module_level_files = {
