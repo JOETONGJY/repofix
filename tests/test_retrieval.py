@@ -188,3 +188,133 @@ class TestConsumerCompat:
         candidates = text.split("Candidate files:")[1].split("Notes:")[0]
         first = [line.strip() for line in candidates.strip().splitlines() if line.strip()][0]
         assert first == "a/shallow.py"
+
+
+# ---- v0.5.2：代码窗口 ----
+
+from repofix.context.retrieval import (  # noqa: E402
+    CodeLocation,
+    CodeWindow,
+    build_code_windows,
+)
+
+
+class TestCodeWindows:
+    def _index(self, root):
+        from repofix.context.symbol_index import build_symbol_index
+
+        return build_symbol_index(root)
+
+    def test_traceback_line_900_lands_in_window(self, tmp_path):
+        """深层 traceback（第 1001 行）必须拿到对应源码，而不是文件头。"""
+        body = "\n".join(f"filler_{i} = {i}" for i in range(1, 1000))
+        root = make_plain_repo(tmp_path, {
+            "big.py": f"{body}\n\ndef target_function():\n    return 'BUG HERE'\n",
+        })
+        location = CodeLocation(path="big.py", tier=0, score=25, line=1001,
+                                anchor_kind="traceback",
+                                reasons=["anchored big.py:1001 (traceback)"])
+        window = build_code_windows(root, [location],
+                                    max_window_chars=20000)[0]
+        assert window.start_line <= 1001 <= window.end_line
+        assert "target_function" in window.text
+        assert "BUG HERE" in window.text
+        assert "filler_1" not in window.text  # 文件头不再混入
+
+    def test_symbol_window_uses_ast_range(self, tmp_path):
+        """AST 命中：窗口覆盖完整函数范围（end_line）。"""
+        root = make_plain_repo(tmp_path, {
+            "svc.py": ("\n" * 9 + "def wide(a, b):\n" + "    x = a\n" * 10 +
+                       "    return x\n"),
+        })
+        location = CodeLocation(path="svc.py", tier=1, score=8, symbol="wide",
+                                reasons=["symbol match: wide"])
+        window = build_code_windows(root, [location], index=self._index(root))[0]
+        assert window.start_line == 10
+        assert window.end_line == 21  # def + 10 行体 + return
+        assert "def wide(a, b):" in window.text
+        assert "return x" in window.text
+        assert "symbol wide()" in window.reason or "symbol" in window.reason
+
+    def test_test_failure_window_targets_test_function(self, tmp_path):
+        """失败身份：窗口定位到测试函数本身（fixture 上下文的低成本近似）。"""
+        root = make_plain_repo(tmp_path, {
+            "tests/test_calc.py": ("def test_add_two():\n    assert add(1, 1) == 2\n"
+                                   "\n\ndef other():\n    pass\n"),
+        })
+        location = CodeLocation(path="tests/test_calc.py", tier=0, score=25,
+                                anchor_kind="test_failure", test_name="test_add_two",
+                                reasons=["anchored (test_failure)"])
+        window = build_code_windows(root, [location], index=self._index(root))[0]
+        assert window.start_line == 1
+        assert "assert add(1, 1) == 2" in window.text
+
+    def test_overlapping_windows_merged(self, tmp_path):
+        root = make_plain_repo(tmp_path, {"m.py": "\n".join(f"line_{i}" for i in range(1, 61))})
+        locations = [
+            CodeLocation(path="m.py", tier=0, score=25, line=10, anchor_kind="traceback"),
+            CodeLocation(path="m.py", tier=0, score=25, line=15, anchor_kind="traceback"),
+        ]
+        windows = build_code_windows(root, locations)
+        assert len(windows) == 1  # 合并为一个窗口
+        assert windows[0].start_line == 1  # 10-40 与 15-55 重叠（含 -40 前向）
+
+    def test_char_budget_clip_marks_truncated(self, tmp_path):
+        root = make_plain_repo(tmp_path, {
+            "long.py": "def huge():\n" + "    x = 1  # padded line content here\n" * 400,
+        })
+        location = CodeLocation(path="long.py", tier=1, score=8, symbol="huge",
+                                reasons=["symbol match: huge"])
+        window = build_code_windows(root, [location], index=self._index(root),
+                                    max_window_chars=800)[0]
+        assert window.truncated is True
+        assert "window clipped" in window.text
+        assert window.text.index("def huge():") < window.text.index("clipped")
+
+    def test_anchor_line_beyond_eof_falls_back_to_head(self, tmp_path):
+        root = make_plain_repo(tmp_path, {"small.py": "a = 1\nb = 2\n"})
+        location = CodeLocation(path="small.py", tier=0, score=25, line=9999,
+                                anchor_kind="traceback")
+        window = build_code_windows(root, [location])[0]
+        assert window.start_line == 1
+        assert "beyond EOF" in window.reason
+        assert "a = 1" in window.text
+
+    def test_line_numbers_match_file_content(self, tmp_path):
+        root = make_plain_repo(tmp_path, {
+            "m.py": "\n".join(f"content_{i}" for i in range(1, 31)),
+        })
+        location = CodeLocation(path="m.py", tier=0, score=25, line=20,
+                                anchor_kind="traceback")
+        window = build_code_windows(root, [location], max_window_chars=5000)[0]
+        assert "20\tcontent_20" in window.text
+        assert window.text.splitlines()[0].startswith("# m.py, lines ")
+
+    def test_total_budget_drops_later_windows(self, tmp_path):
+        root = make_plain_repo(tmp_path, {
+            "a.py": "x = 1\n" * 100, "b.py": "y = 2\n" * 100, "c.py": "z = 3\n" * 100,
+        })
+        locations = [CodeLocation(path=p, tier=0, score=25, line=50, anchor_kind="traceback")
+                     for p in ("a.py", "b.py", "c.py")]
+        windows = build_code_windows(root, locations, max_total_chars=900,
+                                     max_window_chars=5000)
+        assert len(windows) < 3  # 预算耗尽后丢弃后续窗口
+        assert sum(len(w.text) for w in windows) <= 900 + 200  # 允许头注释开销
+
+    def test_select_issue_files_returns_windows(self, tmp_path):
+        """Test Agent 片段：traceback 行号直取窗口（v0.5.2 核心验收）。"""
+        from repofix.test_agent.generator import select_issue_files
+
+        body = "\n".join(f"filler_{i} = {i}" for i in range(1, 1000))
+        root = make_plain_repo(tmp_path, {
+            "big.py": f"{body}\n\ndef target_function():\n    return 'BUG HERE'\n",
+        })
+        issue = 'order total stale\nFile "big.py", line 1001, in target_function'
+        snippets = select_issue_files(root, issue, max_files=2)
+        assert snippets[0][0] == "big.py"
+        assert "target_function" in snippets[0][1]
+        assert "BUG HERE" in snippets[0][1]
+
+    def test_window_render_type(self):
+        window = CodeWindow(path="p.py", start_line=1, end_line=2, text="# p.py")
+        assert isinstance(window, CodeWindow)

@@ -223,3 +223,132 @@ class CodeRetriever:
             self._content_cache[rel] = _read_bounded(self._root / rel).lower()
         content = self._content_cache[rel]
         return [kw for kw in keywords if kw in content]
+
+
+# ---- 代码窗口（v0.5.2：文件级候选 → 行级证据）----
+
+
+@dataclass
+class CodeWindow:
+    path: str
+    start_line: int
+    end_line: int
+    text: str  # 头注释 + 行号内容（渲染后的最终片段）
+    truncated: bool = False
+    reason: str = ""  # 窗口来源 / 回退原因（"缺少上下文"记录点）
+
+
+def build_code_windows(
+    repo_root,
+    locations: list[CodeLocation],
+    *,
+    index: SymbolIndex | None = None,
+    max_total_chars: int = DEFAULT_MAX_TOTAL_CHARS,
+    max_window_chars: int = DEFAULT_MAX_WINDOW_CHARS,
+) -> list[CodeWindow]:
+    """从候选位置提取代码窗口：锚定行号 ±40 / AST 函数范围 / 文件头回退。
+
+    同文件多命中先合并重叠（含 ≤ MERGE_GAP_LINES 间隙），再按总字符预算
+    顺序渲染；预算耗尽后剩余位置丢弃——窗口数 < 位置数即发生了丢弃，
+    调用方可据此记录诊断。回退情况（无位置信号 / 行号越界）写入 reason。
+    """
+    root = Path(repo_root)
+    spans_by_file: dict[str, list[tuple[int, int, str]]] = {}
+    file_order: list[str] = []  # 按位置排名顺序渲染——窗口顺序 = 检索优先级
+    for location in locations:
+        span = _window_span(location, index)
+        if span is None:
+            continue
+        if location.path not in spans_by_file:
+            file_order.append(location.path)
+            spans_by_file[location.path] = []
+        spans_by_file[location.path].append(span)
+
+    windows: list[CodeWindow] = []
+    budget = max_total_chars
+    for path in file_order:
+        for start, end, reason in _merge_spans(spans_by_file[path]):
+            if budget <= 0:
+                break
+            window = _render_window(root, path, start, end, reason,
+                                    min(max_window_chars, budget))
+            budget -= len(window.text)
+            windows.append(window)
+        if budget <= 0:
+            break
+    return windows
+
+
+def _window_span(location: CodeLocation,
+                 index: SymbolIndex | None) -> tuple[int, int, str] | None:
+    """位置 → (start, end, reason)。行号为 1-based 闭区间。"""
+    if location.line is not None:
+        start = max(1, location.line - WINDOW_CONTEXT_LINES)
+        return start, location.line + WINDOW_CONTEXT_LINES, \
+            f"anchor line {location.line} ({location.anchor_kind})"
+    # 失败身份：测试函数本身也是 Test Agent 需要的上下文
+    if location.test_name and index is not None:
+        for entry in index.lookup(location.test_name):
+            if entry.file == location.path and entry.end_line is not None:
+                return entry.line, entry.end_line, f"test function {entry.qualname}()"
+    if location.symbol and index is not None:
+        for entry in index.lookup(location.symbol):
+            if entry.file == location.path and entry.end_line is not None:
+                return entry.line, entry.end_line, f"symbol {entry.qualname}()"
+    return 1, HEAD_FALLBACK_LINES, "no position signal; file head fallback"
+
+
+def _merge_spans(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    """同文件窗口按起点排序并合并重叠 / 相邻（间隙 ≤ MERGE_GAP_LINES）。"""
+    ordered = sorted(spans, key=lambda item: (item[0], item[1]))
+    merged: list[tuple[int, int, str]] = []
+    for start, end, reason in ordered:
+        if merged and start <= merged[-1][1] + MERGE_GAP_LINES:
+            prev_start, prev_end, prev_reason = merged[-1]
+            merged[-1] = (prev_start, max(prev_end, end), f"{prev_reason}; {reason}")
+        else:
+            merged.append((start, end, reason))
+    return merged
+
+
+def _render_window(root: Path, path: str, start: int, end: int,
+                   reason: str, char_cap: int) -> CodeWindow:
+    """渲染单个窗口：头注释 + 行号内容；超预算截断并显式标记。"""
+    try:
+        raw = (root / path).read_bytes()
+    except OSError as exc:
+        return CodeWindow(path=path, start_line=0, end_line=0,
+                          text=f"# {path} (unreadable: {type(exc).__name__})",
+                          truncated=True, reason=reason)
+    if b"\x00" in raw[:8192]:
+        return CodeWindow(path=path, start_line=0, end_line=0,
+                          text=f"# {path} (binary file skipped)",
+                          truncated=True, reason=reason)
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    total = len(lines)
+    if start > total:  # 锚定行号越界（错误行号）：回退文件头并记录
+        start, end = 1, min(HEAD_FALLBACK_LINES, total)
+        reason = f"{reason}; anchor line beyond EOF, fell back to head"
+    end = min(end, total)
+    start = max(1, start)
+
+    body: list[str] = []
+    truncated = False
+    used = 0
+    for number in range(start, end + 1):
+        rendered = f"{number}\t{lines[number - 1]}"
+        if used + len(rendered) > char_cap:
+            truncated = True
+            break
+        body.append(rendered)
+        used += len(rendered)
+    if truncated:
+        body.append(f"[...window clipped at {char_cap} chars; "
+                    f"requested lines {start}-{end}]")
+    shown_end = start + len(body) - 1 if body else start - 1
+    header = f"# {path}, lines {start}-{shown_end}"
+    if reason:
+        header += f"  ({reason})"
+    return CodeWindow(path=path, start_line=start, end_line=shown_end,
+                      text=header + "\n" + "\n".join(body),
+                      truncated=truncated, reason=reason)

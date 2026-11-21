@@ -65,35 +65,36 @@ class TestGenerationResult:
 def select_issue_files(
     repo_root, instruction: str, max_files: int = MAX_SNIPPET_FILES
 ) -> list[tuple[str, str]]:
-    """按共享检索内核（v0.5.1）选出候选文件并读取有界内容。
+    """按共享检索内核（v0.5.1）选出候选位置，返回代码窗口（v0.5.2）。
 
     评分委托 CodeRetriever（锚定 > 符号名 > 关键词 分层排序）；扫描范围
-    保留 Test Agent 自己的召回面（500 文件/深度 6，评审约定 1）。确定性：
-    同基线同输入 ⇒ 同结果。敏感文件（.env/密钥）绝不读取；无信号命中时
-    退化为浅层源码文件。
+    保留 Test Agent 自己的召回面（500 文件/深度 6，评审约定 1）。片段不再
+    固定读文件头：锚定行号 ±40 行 / AST 函数范围 / 文件头回退，重叠窗口
+    合并、总字符预算约束（此前 traceback 指向第 900 行时片段看不到目标
+    代码）。确定性：同基线同输入 ⇒ 同结果。敏感文件绝不读取。
     """
     from pathlib import Path
 
-    from repofix.context.retrieval import TEST_AGENT_SCOPE, CodeRetriever
+    from repofix.context.retrieval import (
+        TEST_AGENT_SCOPE,
+        CodeLocation,
+        CodeRetriever,
+        build_code_windows,
+    )
 
     root = Path(repo_root)
     retriever = CodeRetriever(root, TEST_AGENT_SCOPE)
     result = retriever.rank(instruction)
-    picked = [loc.path for loc in result.locations if loc.score > 0][:max_files]
-    if not picked:  # 无命中：退化取浅层源码（保持确定性）
-        picked = retriever.structural_fallback(max_files)
-
-    snippets: list[tuple[str, str]] = []
-    for rel in picked:
-        try:
-            raw = (root / rel).read_bytes()[:MAX_SNIPPET_BYTES]
-        except OSError:
-            continue
-        if b"\x00" in raw:
-            continue
-        content = raw.decode("utf-8", errors="replace")[:MAX_SNIPPET_CHARS]
-        snippets.append((rel, content))
-    return snippets
+    locations = [loc for loc in result.locations if loc.score > 0][:max_files]
+    if not locations:  # 无命中：退化取浅层源码（保持确定性，窗口为文件头）
+        locations = [
+            CodeLocation(path=rel, tier=3, score=0, reasons=["structural fallback"])
+            for rel in retriever.structural_fallback(max_files)
+        ]
+    windows = build_code_windows(root, locations, index=retriever.index,
+                                 max_total_chars=MAX_SNIPPET_CHARS * max_files,
+                                 max_window_chars=MAX_SNIPPET_CHARS)
+    return [(window.path, window.text) for window in windows]
 
 
 def _build_generation_messages(

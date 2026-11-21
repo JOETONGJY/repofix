@@ -33,6 +33,7 @@ class SymbolEntry:
     kind: str  # class / method / function
     file: str  # 仓库相对 posix 路径
     line: int
+    end_line: int | None = None  # 定义块结束行（v0.5.2：代码窗口用；老索引兼容 None）
 
     def render(self) -> str:
         display = f"{self.qualname}()" if self.kind in ("function", "method") else self.qualname
@@ -118,8 +119,10 @@ class _IndexBuilder(ast.NodeVisitor):
             return
         self.budget -= 1
         qualname = ".".join(name for name, _ in self._stack + [(node.name, kind)])
+        # end_lineno：Python 3.8+ 定义块结束行（代码窗口截取用）；缺失时保持 None 兼容
         self.entries.append(SymbolEntry(
-            name=node.name, qualname=qualname, kind=kind, file=self.file, line=node.lineno))
+            name=node.name, qualname=qualname, kind=kind, file=self.file, line=node.lineno,
+            end_line=getattr(node, "end_lineno", None)))
         self._stack.append((node.name, kind))
         self.generic_visit(node)
         self._stack.pop()
