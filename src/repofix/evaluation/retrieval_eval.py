@@ -17,6 +17,9 @@ gold 行范围解析自 unified diff，采用**旧文件坐标**（评审问题 
 插入点）；函数级标签由原始 AST 符号索引（含 end_line）映射，模块级
 修改（常量/import）单独标记，不强行套用 Function Hit。
 
+新建 gold 文件（--- /dev/null）在原始仓库中不存在——单独标记
+new_files，检索原理上不可命中，不计入 File Recall 分母（评审 P1-3）。
+
 变体语义（评审问题 2）：三组变体是**同一框架内的消融**（ablation），
 不是对历史版本的忠实复现——keyword_only 关闭了旧版没有的内容匹配、
 头窗口（60/300 行 + 字符截断）也与旧版 6000 字符头读不等价。跨变体
@@ -24,6 +27,8 @@ gold 行范围解析自 unified diff，采用**旧文件坐标**（评审问题 
 """
 import re
 from dataclasses import dataclass, field
+
+from repofix.context.retrieval import CodeLocation
 
 # gold 文件里常见的测试目录前缀（SWE-bench gold_patch 理论上不含测试，
 # 防御性过滤并单独报告）
@@ -36,8 +41,10 @@ class GoldLabels:
 
     instance_id: str
     issue_text: str = ""  # dataset problem_statement（rank 输入）
-    files: list[str] = field(default_factory=list)  # 生产文件（排除测试路径）
+    files: list[str] = field(default_factory=list)  # 生产文件（排除测试路径与新建文件）
     test_files: list[str] = field(default_factory=list)  # 误入 gold 的测试文件
+    new_files: list[str] = field(default_factory=list)  # gold 新建的生产文件
+    # （base_commit 不存在——检索原理上不可能命中，单独标记不进分母，评审 P1-3）
     ranges: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     labels: dict[str, list[tuple[int, int, str]]] = field(default_factory=dict)
     # labels[file] = [(start, end, symbol_qualname_or_"module-level")]
@@ -63,18 +70,23 @@ def parse_gold_patch(instance_id: str, diff: str) -> GoldLabels:
         return labels
     ranges: dict[str, list[tuple[int, int]]] = {}
     current: str | None = None
+    old_devnull = False  # 前一个 '--- /dev/null' → 本次 '+++' 是新建文件
     hunk_re = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
     old_line = 0
     pending_anchor: int | None = None  # 当前替换块首个被删行的原始位置
     try:
         for line in diff.splitlines():
-            if line.startswith("+++ "):
+            if line.startswith("--- "):
+                old_devnull = line[4:].split("\t")[0].strip() == "/dev/null"
+            elif line.startswith("+++ "):
                 path = line[4:].split("\t")[0].strip()
                 if path == "/dev/null":
                     current = None
                     continue
                 current = path[2:] if path.startswith("b/") else path
                 ranges.setdefault(current, [])
+                if old_devnull:
+                    labels.new_files.append(current)  # gold 新建文件（评审 P1-3）
             elif line.startswith("@@ ") and current is not None:
                 match = hunk_re.match(line)
                 if not match:
@@ -99,9 +111,10 @@ def parse_gold_patch(instance_id: str, diff: str) -> GoldLabels:
         labels.parse_ok = False
         labels.parse_error = f"{type(exc).__name__}: {exc}"
         return labels
+    new_file_set = set(labels.new_files)
     for path, file_ranges in ranges.items():
-        if not file_ranges:
-            continue
+        if not file_ranges or path in new_file_set:
+            continue  # 新建文件：原始仓库中不存在，不进可检索集合
         merged: list[tuple[int, int]] = []
         for start, end in sorted(file_ranges):
             if merged and start <= merged[-1][1] + 1:
@@ -115,6 +128,7 @@ def parse_gold_patch(instance_id: str, diff: str) -> GoldLabels:
             labels.ranges[path] = merged
     labels.test_files.sort()
     labels.files.sort()
+    labels.new_files.sort()
     return labels
 
 
@@ -150,6 +164,8 @@ class TaskRetrievalEval:
     instance_id: str
     variant: str
     gold_files: list[str] = field(default_factory=list)
+    new_file_required: bool = False  # gold 含新建生产文件（评审 P1-3）
+    impossible_for_retrieval: bool = False  # gold 全为新建文件 → 检索原理上不可命中
     top_paths: list[str] = field(default_factory=list)
     file_hit_any: bool = False
     file_hit_all: bool = False
@@ -164,7 +180,10 @@ class TaskRetrievalEval:
     def to_dict(self) -> dict:
         return {
             "instance_id": self.instance_id, "variant": self.variant,
-            "gold_files": self.gold_files, "top_paths": self.top_paths,
+            "gold_files": self.gold_files,
+            "new_file_required": self.new_file_required,
+            "impossible_for_retrieval": self.impossible_for_retrieval,
+            "top_paths": self.top_paths,
             "file_hit_any": self.file_hit_any, "file_hit_all": self.file_hit_all,
             "scan_miss": self.scan_miss, "window_hit_files": self.window_hit_files,
             "function_hit": self.function_hit,
@@ -178,12 +197,15 @@ def evaluate_retrieval(labels: GoldLabels, result, windows, *, top_k: int = 3) -
     """单任务评估。result = CodeRetriever.rank() 的 RetrievalResult；
     windows = build_code_windows() 的输出（对应同一 result 的 top-k）。"""
     evaluation = TaskRetrievalEval(
-        instance_id=labels.instance_id, variant="", gold_files=list(labels.files))
+        instance_id=labels.instance_id, variant="", gold_files=list(labels.files),
+        new_file_required=bool(labels.new_files))
     if not labels.parse_ok:
         evaluation.error = f"gold parse failed: {labels.parse_error}"
         return evaluation
     if not labels.files:
-        evaluation.error = "no production gold files"
+        # 只有新建文件（或只有测试文件）：检索原理上不可命中——单独标记，
+        # 不计入错误也不进 File Recall 分母（评审 P1-3）
+        evaluation.impossible_for_retrieval = True
         evaluation.module_level_only = bool(labels.test_files)
         return evaluation
 
@@ -227,15 +249,28 @@ def evaluate_retrieval(labels: GoldLabels, result, windows, *, top_k: int = 3) -
 
 
 def summarize(records: list[TaskRetrievalEval]) -> dict:
-    """聚合指标。分母 = 标签有效且无错误的任务（parse_ok 且有生产 gold 文件）。"""
-    valid = [r for r in records if not r.error]
+    """聚合指标（评审 P0-2：由本函数统一排除错误并报告分母，调用方不得预过滤）。
+
+    分母 = 无错误且非 impossible_for_retrieval 的任务；错误任务与
+    新建文件任务分别报告数量，保证各变体分母可见、可对比。
+    """
+    total_assigned = len(records)
+    errors = [r for r in records if r.error]
+    impossible = [r for r in records if r.impossible_for_retrieval and not r.error]
+    valid = [r for r in records if not r.error and not r.impossible_for_retrieval]
     total = len(valid)
+    new_file_tasks = [r for r in records if r.new_file_required and not r.error]
+
     def rate(predicate) -> float:
         return round(sum(1 for r in valid if predicate(r)) / total, 3) if total else 0.0
+
     return {
-        "tasks_total": len(records),
+        "tasks_total": total_assigned,
         "tasks_valid": total,
-        "tasks_error": len(records) - total,
+        "tasks_error": len(errors),
+        "tasks_impossible_new_file": len(impossible),
+        "new_file_required_rate": (round(len(new_file_tasks) / total_assigned, 3)
+                                   if total_assigned else 0.0),
         "file_recall_any@3": rate(lambda r: r.file_hit_any),
         "file_recall_all@3": rate(lambda r: r.file_hit_all),
         "scan_miss_rate": rate(lambda r: bool(r.scan_miss)),
@@ -243,5 +278,33 @@ def summarize(records: list[TaskRetrievalEval]) -> dict:
         "function_hit@3": rate(lambda r: r.function_hit),
         "module_level_only_rate": rate(lambda r: r.module_level_only),
         "truncated_on_gold_rate": rate(lambda r: r.truncated_on_gold),
-        "errors": [f"{r.instance_id}: {r.error}" for r in records if r.error][:10],
+        "errors": [f"{r.instance_id}: {r.error}" for r in errors][:10],
+        "impossible_new_file_ids": [r.instance_id for r in impossible][:10],
     }
+
+
+# —— 变体信号定义（评审 P0-1：kernel 变体必须与生产 CodeRetriever 默认一致）——
+
+PRODUCTION_SIGNALS = ("anchor", "symbol", "keyword", "content")
+
+VARIANT_SIGNALS = {
+    # 消融基线：仅路径/文件名评分（旧版 Test Agent 没有内容匹配）
+    "keyword_only": ("keyword",),
+    # 全信号（与生产默认一致）+ 文件头窗口 = v0.5.1
+    "kernel_head": PRODUCTION_SIGNALS,
+    # 全信号（与生产默认一致）+ 锚定/符号/内容命中行窗口 = 当前实现
+    "kernel_windows": PRODUCTION_SIGNALS,
+}
+
+
+def picked_locations(result, top_k: int) -> list:
+    """生产对齐的候选选取（评审 P0-1）：有信号候选 → 结构回退（浅层优先），
+    与 select_issue_files 的回退语义一致。"""
+    picked = [loc for loc in result.locations if loc.score > 0][:top_k]
+    if not picked:
+        fallback_files = result.structural_fallback_files[:top_k]
+        picked = [
+            CodeLocation(path=rel, tier=3, score=0, reasons=["structural fallback"])
+            for rel in fallback_files
+        ]
+    return picked

@@ -90,6 +90,9 @@ class RetrievalResult:
     symbol_hits: dict[str, list[str]]  # token → 定义所在文件
     scanned_files: list[str]
     scan_truncated: bool
+    structural_fallback_files: list[str] = field(default_factory=list)
+    # 无信号时的生产回退顺序（浅层源码优先）——离线评估的候选选取与
+    # select_issue_files 共用同一语义（评审 P0-1）
 
 
 class CodeRetriever:
@@ -172,6 +175,8 @@ class CodeRetriever:
             symbol_hits=symbol_hits,
             scanned_files=list(self._rel_paths),
             scan_truncated=self._scan_truncated,
+            structural_fallback_files=sorted(
+                self._py_candidates, key=lambda rel: (rel.count("/"), rel)),
         )
 
     def _score_candidate(
@@ -384,13 +389,13 @@ def _render_window(root: Path, path: str, start: int, end: int,
     try:
         raw = (root / path).read_bytes()[:WINDOW_FILE_MAX_BYTES]
     except OSError as exc:
+        text = f"# {path} (unreadable: {type(exc).__name__})"[:char_cap]
         return CodeWindow(path=path, start_line=0, end_line=0,
-                          text=f"# {path} (unreadable: {type(exc).__name__})",
-                          truncated=True, reason=reason)
+                          text=text, truncated=True, reason=reason)
     if b"\x00" in raw[:8192]:
+        text = f"# {path} (binary file skipped)"[:char_cap]
         return CodeWindow(path=path, start_line=0, end_line=0,
-                          text=f"# {path} (binary file skipped)",
-                          truncated=True, reason=reason)
+                          text=text, truncated=True, reason=reason)
     # 有界读取：超大文件只读前 WINDOW_FILE_MAX_BYTES（性能护栏；行号在读取
     # 范围内仍然正确，超出部分按"有界读取"语义截断）
     raw = raw[:WINDOW_FILE_MAX_BYTES]
@@ -433,5 +438,10 @@ def _render_window(root: Path, path: str, start: int, end: int,
         if reason:
             header += f"  ({reason[:120]}{'...' if len(reason) > 120 else ''})"
         text = header + "\n" + "\n".join(body + ([marker] if marker else []))
+    # 极端边界：正文已空而头部/标记仍超预算（超长路径/reason）→ 先去 reason，
+    # 仍超则硬截断整个窗口文本（评审问题 4：所有返回路径必须 ≤ char_cap）
+    if len(text) > char_cap:
+        text = f"# {path}, lines {start}-{shown_end}"[:char_cap]
+        truncated = True
     return CodeWindow(path=path, start_line=start, end_line=shown_end,
                       text=text, truncated=truncated, reason=reason)

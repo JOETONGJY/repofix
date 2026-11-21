@@ -27,16 +27,19 @@ from repofix.context.retrieval import (  # noqa: E402
     TEST_AGENT_SCOPE,
     CodeLocation,
     CodeRetriever,
+    RetrievalResult,
     RetrievalScope,
     build_code_windows,
 )
 from repofix.context.symbol_index import build_symbol_index  # noqa: E402
 from repofix.evaluation.retrieval_eval import (  # noqa: E402
+    VARIANT_SIGNALS,
     GoldLabels,
     TaskRetrievalEval,
     evaluate_retrieval,
     map_ranges_to_symbols,
     parse_gold_patch,
+    picked_locations,
     summarize,
 )
 from repofix.evaluation.swebench.workspace import extract_testbed  # noqa: E402
@@ -44,12 +47,6 @@ from repofix.workspace.docker_cli import DockerCli  # noqa: E402
 
 _SCOPE = TEST_AGENT_SCOPE
 WIDE_SCOPE = RetrievalScope(3000, 8)  # 宽扫描：测评分质量本身（scan 饥饿另报）
-
-VARIANTS = {
-    "keyword_only": ("keyword",),
-    "kernel_head": ("anchor", "symbol", "keyword"),
-    "kernel_windows": ("anchor", "symbol", "keyword"),
-}
 
 
 def load_dataset(dataset_dir: Path) -> dict[str, dict]:
@@ -89,10 +86,16 @@ def ensure_testbed(cli: DockerCli, image: str, instance_id: str, base_commit: st
 def evaluate_variant(instance_id: str, variant: str, testbed_dir: Path,
                      labels: GoldLabels, top_k: int, window_budget: int) -> dict:
     scope = _SCOPE  # 模块级：由 --scope 决定（wide 用于把"评分质量"与"扫描预算"解耦）
-    retriever = CodeRetriever(testbed_dir, scope, signals=VARIANTS[variant])
+    retriever = CodeRetriever(testbed_dir, scope, signals=VARIANT_SIGNALS[variant])
     result = retriever.rank(labels.issue_text or "")
+    # 生产对齐（评审 P0-1）：候选选取含结构回退，与 select_issue_files 同语义
+    picked = picked_locations(result, top_k)
+    effective = RetrievalResult(
+        locations=picked, anchored_matched=result.anchored_matched,
+        keywords=result.keywords, symbol_hits=result.symbol_hits,
+        scanned_files=result.scanned_files, scan_truncated=result.scan_truncated)
     if variant == "kernel_windows":
-        windows = build_code_windows(testbed_dir, result.locations[:top_k],
+        windows = build_code_windows(testbed_dir, picked,
                                      index=retriever.index,
                                      keywords=result.keywords,
                                      max_total_chars=window_budget)
@@ -101,9 +104,9 @@ def evaluate_variant(instance_id: str, variant: str, testbed_dir: Path,
         windows = build_code_windows(
             testbed_dir,
             [CodeLocation(path=loc.path, tier=loc.tier, score=loc.score)
-             for loc in result.locations[:top_k]],
+             for loc in picked],
             index=retriever.index, max_total_chars=window_budget)
-    record = evaluate_retrieval(labels, result, windows, top_k=top_k)
+    record = evaluate_retrieval(labels, effective, windows, top_k=top_k)
     record.variant = variant
     return record.to_dict()
 
@@ -164,20 +167,44 @@ def main() -> int:
         print(f"[{index}/{len(instance_ids)}] {instance_id}: "
               f"gold={len(labels.files)} files, variants done", flush=True)
 
+    # P0-2（评审）：全部记录按变体归属传给 summarize——由它统一排除错误/
+    # 新建文件任务并报告各组分母；另计算"共同有效任务集"汇总，供跨变体
+    # 对比时避免分母不一致。
+    def to_eval(r: dict) -> TaskRetrievalEval:
+        return TaskRetrievalEval(**{k: v for k, v in r.items()
+                                    if k in TaskRetrievalEval.__dataclass_fields__})
+
     summary = {}
     for variant in variants:
-        variant_records = [TaskRetrievalEval(**{k: v for k, v in r.items()
-                                                if k in TaskRetrievalEval.__dataclass_fields__})
-                           for r in all_records
-                           if r.get("variant") == variant and not r.get("error")]
+        variant_records = [to_eval(r) for r in all_records if r.get("variant") == variant]
         summary[variant] = summarize(variant_records)
+
+    valid_ids_by_variant = []
+    for variant in variants:
+        ids = {r["instance_id"] for r in all_records
+               if r.get("variant") == variant and not r.get("error")
+               and not r.get("impossible_for_retrieval")}
+        valid_ids_by_variant.append(ids)
+    common_ids = set.intersection(*valid_ids_by_variant) if valid_ids_by_variant else set()
+    common_summary = {}
+    for variant in variants:
+        common_records = [to_eval(r) for r in all_records
+                          if r.get("variant") == variant and r["instance_id"] in common_ids]
+        common_summary[variant] = summarize(common_records)
+
     output = {
         "variants": variants,
+        "variant_signals": VARIANT_SIGNALS,
         "top_k": args.top_k,
         "window_budget": args.window_budget,
+        "scope": args.scope,
         "task_count": len(instance_ids),
         "skips": dict(skips),
         "summary": summary,
+        "common_valid_summary": {
+            "task_count": len(common_ids),
+            "by_variant": common_summary,
+        },
         "records": all_records,
     }
     out_path = Path(args.out)

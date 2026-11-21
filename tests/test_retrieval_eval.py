@@ -6,6 +6,7 @@ from repofix.evaluation.retrieval_eval import (
     evaluate_retrieval,
     map_ranges_to_symbols,
     parse_gold_patch,
+    picked_locations,
     summarize,
 )
 from tests.test_repo_overview import make_repo as make_plain_repo
@@ -31,9 +32,10 @@ diff --git a/tests/test_calc.py b/tests/test_calc.py
 def test_parse_gold_patch_exact_added_lines():
     labels = parse_gold_patch("t1", GOLD_DIFF)
     assert labels.parse_ok is True
-    # 生产文件只含 services/calc.py；测试文件单独归类
+    # 生产文件只含 services/calc.py；/dev/null 新建的测试文件归 new_files（P1-3）
     assert labels.files == ["services/calc.py"]
-    assert labels.test_files == ["tests/test_calc.py"]
+    assert labels.new_files == ["tests/test_calc.py"]
+    assert labels.test_files == []
     # 旧文件坐标：-old_line() 在原文件第 11 行（+ 替换锚定同一位置）
     assert labels.ranges["services/calc.py"] == [(11, 11)]
 
@@ -219,3 +221,74 @@ def test_gold_insertion_only_anchors_at_boundary():
             " existing_b\n")     # ctx old 11→12
     labels = parse_gold_patch("t", hunk)
     assert labels.ranges["mod.py"] == [(11, 11)]
+
+
+def test_gold_new_file_marked_and_excluded_from_denominator():
+    """评审 P1-3：gold 新建生产文件 → 检索原理上不可命中，单独标记并排除分母。"""
+    from repofix.evaluation.retrieval_eval import TaskRetrievalEval
+
+    hunk = ("diff --git a/new_module.py b/new_module.py\n"
+            "--- /dev/null\n+++ b/new_module.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+def new_feature():\n"
+            "+    return True\n")
+    labels = parse_gold_patch("t", hunk)
+    assert labels.new_files == ["new_module.py"]
+    assert labels.files == []
+    result = _result(["anything.py"], scanned=["anything.py"])
+    record = evaluate_retrieval(labels, result, [])
+    assert record.impossible_for_retrieval is True
+    assert record.new_file_required is True
+    assert record.error == ""  # 不是错误，是单独标记
+    summary = summarize([record])
+    assert summary["tasks_valid"] == 0
+    assert summary["tasks_impossible_new_file"] == 1
+    assert summary["new_file_required_rate"] == 1.0
+    assert TaskRetrievalEval(instance_id="t", variant="v",
+                             new_file_required=True).to_dict()["new_file_required"] is True
+
+
+def test_gold_mixed_new_and_existing_kept_in_denominator():
+    """混合补丁（既有文件 + 新建文件）：既有文件仍可检索 → 留在分母。"""
+    hunk = ("diff --git a/exists.py b/exists.py\n"
+            "--- a/exists.py\n+++ b/exists.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+            "diff --git a/brand_new.py b/brand_new.py\n"
+            "--- /dev/null\n+++ b/brand_new.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+added()\n")
+    labels = parse_gold_patch("t", hunk)
+    assert sorted(labels.files) == ["exists.py"]
+    assert labels.new_files == ["brand_new.py"]
+    result = _result(["exists.py"], scanned=["exists.py"])
+    record = evaluate_retrieval(labels, result, [_window("exists.py", 1, 2)])
+    assert record.new_file_required is True
+    assert record.impossible_for_retrieval is False
+    assert record.file_hit_any is True
+    summary = summarize([record])
+    assert summary["tasks_valid"] == 1  # 混合任务留在分母
+    assert summary["new_file_required_rate"] == 1.0
+
+
+def test_variant_signals_match_production_defaults():
+    """评审 P0-1：kernel 变体信号必须与生产 CodeRetriever 默认完全一致。"""
+    from repofix.context.retrieval import CodeRetriever
+    from repofix.evaluation.retrieval_eval import PRODUCTION_SIGNALS, VARIANT_SIGNALS
+
+    assert VARIANT_SIGNALS["kernel_head"] == PRODUCTION_SIGNALS
+    assert VARIANT_SIGNALS["kernel_windows"] == PRODUCTION_SIGNALS
+    assert CodeRetriever.__init__.__defaults__ is not None  # 默认即 PRODUCTION_SIGNALS
+    assert VARIANT_SIGNALS["keyword_only"] == ("keyword",)  # 消融基线：无内容/锚定/符号
+
+
+def test_picked_locations_structural_fallback():
+    """评审 P0-1：无信号时回退浅层源码——与 select_issue_files 同语义。"""
+    result = RetrievalResult(locations=[], anchored_matched=[], keywords=[],
+                             symbol_hits={}, scanned_files=["a/shallow.py", "b/deep/x.py"],
+                             scan_truncated=False,
+                             structural_fallback_files=["a/shallow.py", "b/deep/x.py"])
+    picked = picked_locations(result, 2)
+    assert [loc.path for loc in picked] == ["a/shallow.py", "b/deep/x.py"]
+    assert picked[0].tier == 3 and picked[0].score == 0

@@ -301,7 +301,7 @@ class TestCodeWindows:
         windows = build_code_windows(root, locations, max_total_chars=900,
                                      max_window_chars=5000)
         assert len(windows) < 3  # 预算耗尽后丢弃后续窗口
-        assert sum(len(w.text) for w in windows) <= 900 + 200  # 允许头注释开销
+        assert sum(len(w.text) for w in windows) <= 900  # 硬预算：严格 ≤ 总额（评审 P2）
 
     def test_select_issue_files_returns_windows(self, tmp_path):
         """Test Agent 片段：traceback 行号直取窗口（v0.5.2 核心验收）。"""
@@ -476,3 +476,39 @@ def test_symbol_window_targets_longest_named_symbol(billing_repo):
         "get_cached_total returns stale value after update_order")
     cache_loc = next(loc for loc in result.locations if loc.path == "cache/order_cache.py")
     assert cache_loc.symbol == "get_cached_total"  # 15 > update_order(12)
+
+
+def test_strict_cap_tiny_budget_long_header(tmp_path):
+    """评审 P2：极小预算 + 超长路径/reason——所有返回路径都必须 ≤ cap。
+
+    build_code_windows 在总预算 < 头部预留时直接丢弃窗口（另一个测试覆盖）；
+    这里直测 _render_window 的最终钳制路径。"""
+    from repofix.context.retrieval import _render_window
+
+    long_name = "module_" + "with_long_name_segment_" * 5 + "final.py"  # ~150 字符
+    root = make_plain_repo(tmp_path, {long_name: "x = 1\n" * 200})
+    long_reason = "anchor line 100 (traceback); " + "; ".join(
+        f"content hit line {i} (some_long_token_{i})" for i in range(10))
+    window = _render_window(root, long_name, 1, 200, long_reason, 150)
+    assert len(window.text) <= 150
+    assert window.truncated is True
+    assert window.end_line >= 1 or window.start_line == 1  # 字段仍然自洽
+
+
+def test_window_dropped_when_budget_below_header_reserve(tmp_path):
+    """总预算放不下头部预留 → 丢弃窗口（不超标渲染）。"""
+    root = make_plain_repo(tmp_path, {"a.py": "x = 1\n" * 50})
+    locations = [CodeLocation(path="a.py", tier=0, score=25, line=10,
+                              anchor_kind="traceback")]
+    windows = build_code_windows(root, locations, max_total_chars=150)
+    assert windows == []
+
+
+def test_strict_cap_all_return_paths(tmp_path):
+    """二进制/不可读分支同样受硬上限约束。"""
+    root = make_plain_repo(tmp_path, {"bin.dat": "\x00\x01binary"})
+    from repofix.context.retrieval import _render_window
+
+    window = _render_window(root, "bin.dat", 1, 10, "reason here", 300)
+    assert len(window.text) <= 300
+    assert "binary" in window.text
