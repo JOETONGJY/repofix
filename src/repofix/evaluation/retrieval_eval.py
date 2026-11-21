@@ -12,9 +12,15 @@ gold patch 做纯离线检索评估——回答"检索模块有没有更容易�
 - Scan Miss Rate：gold 文件是否根本没进有界扫描范围；
 - Snippet Truncation：gold 文件的窗口被字符预算截断且 gold 行不在窗口内。
 
-gold 行范围解析自 unified diff 的 **新增行**（精确到行，不只 hunk 头）；
-函数级标签由 AST 符号索引（含 end_line）映射，模块级修改（常量/import）
-单独标记，不强行套用 Function Hit。
+gold 行范围解析自 unified diff，采用**旧文件坐标**（评审问题 1：检索
+窗口从 base_commit 原始代码提取，必须同坐标系——删除行精确、插入行记
+插入点）；函数级标签由原始 AST 符号索引（含 end_line）映射，模块级
+修改（常量/import）单独标记，不强行套用 Function Hit。
+
+变体语义（评审问题 2）：三组变体是**同一框架内的消融**（ablation），
+不是对历史版本的忠实复现——keyword_only 关闭了旧版没有的内容匹配、
+头窗口（60/300 行 + 字符截断）也与旧版 6000 字符头读不等价。跨变体
+结论只能表述为"同一评估框架内增加信号/窗口后指标如何变化"。
 """
 import re
 from dataclasses import dataclass, field
@@ -40,7 +46,16 @@ class GoldLabels:
 
 
 def parse_gold_patch(instance_id: str, diff: str) -> GoldLabels:
-    """unified diff → 逐文件新增行范围。只认 '+' 行（含上下文精确度更高）。"""
+    """unified diff → 逐文件修改范围，**旧文件坐标**（base_commit 原始行号）。
+
+    评审问题 1：检索窗口从 base_commit 原始代码提取，gold 位置必须用同一
+    坐标系——新文件坐标在补丁前部插行时会整体漂移。规则：
+    - '-' 删除行：在原始文件中真实存在，按 old_line 精确记录；
+    - '+' 插入行：原始文件中不存在，记录插入点 (old_line, old_line)——
+      即原文件中紧随其后那一行的位置（±窗口半径足以覆盖邻域）；
+    - 纯删除补丁由此产生有效范围（新坐标方案下会得到空集）；
+    - 上下文行同时前进新旧计数。
+    """
     labels = GoldLabels(instance_id=instance_id)
     if not diff or not diff.strip():
         labels.parse_ok = False
@@ -48,8 +63,9 @@ def parse_gold_patch(instance_id: str, diff: str) -> GoldLabels:
         return labels
     ranges: dict[str, list[tuple[int, int]]] = {}
     current: str | None = None
-    hunk_re = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-    new_line = 0
+    hunk_re = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+    old_line = 0
+    pending_anchor: int | None = None  # 当前替换块首个被删行的原始位置
     try:
         for line in diff.splitlines():
             if line.startswith("+++ "):
@@ -63,15 +79,22 @@ def parse_gold_patch(instance_id: str, diff: str) -> GoldLabels:
                 match = hunk_re.match(line)
                 if not match:
                     continue
-                new_line = int(match.group(2))
+                old_line = int(match.group(1))
+                pending_anchor = None
             elif current is not None and line.startswith(("+", "-")) \
                     and not line.startswith(("+++", "---")):
-                if line.startswith("+"):
-                    ranges[current].append((new_line, new_line))
-                    new_line += 1
-                # '-' 行只在旧文件，新行号不前进
+                if line.startswith("-"):
+                    if pending_anchor is None:
+                        pending_anchor = old_line
+                    ranges[current].append((old_line, old_line))
+                    old_line += 1
+                else:
+                    # '+' 行：替换块内锚定被删行位置；纯插入锚定边界
+                    anchor = pending_anchor if pending_anchor is not None else old_line
+                    ranges[current].append((anchor, anchor))
             elif current is not None and not line.startswith("\\"):
-                new_line += 1  # 上下文行
+                old_line += 1  # 上下文行
+                pending_anchor = None
     except ValueError as exc:
         labels.parse_ok = False
         labels.parse_error = f"{type(exc).__name__}: {exc}"

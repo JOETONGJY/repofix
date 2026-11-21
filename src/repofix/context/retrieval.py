@@ -58,9 +58,12 @@ TEST_AGENT_SCOPE = RetrievalScope(500, 6)
 
 # —— 代码窗口（v0.5.2）——
 WINDOW_CONTEXT_LINES = 40  # 锚定行号上下的窗口半径
-HEAD_FALLBACK_LINES = 60  # 无可靠位置时的文件头回退行数
+HEAD_FALLBACK_LINES = 300  # 无可靠位置时的文件头回退行数（配合字符截断，近似旧版
+                           # 6000 字符头读——60 行在稀疏文件上不等价，评审问题 2）
 MERGE_GAP_LINES = 5  # 同文件窗口间隙 ≤ 此值时合并
 MAX_WINDOWS_PER_FILE = 3  # 单文件窗口数上限（内容命中 + 符号 API 上下文并存时截断）
+WINDOW_HEADER_RESERVE = 320  # 头部 + 截断标记的预留开销（硬预算：正文 = cap - 预留）
+WINDOW_FILE_MAX_BYTES = 2 * 1024 * 1024  # 窗口/内容扫描的有界读取上限（性能护栏）
 DEFAULT_MAX_WINDOW_CHARS = 6000
 DEFAULT_MAX_TOTAL_CHARS = 18000
 
@@ -93,7 +96,10 @@ class CodeRetriever:
     """按仓库基线状态构建的多信号候选检索器（确定性；无 LLM）。"""
 
     def __init__(self, repo_root, scope: RetrievalScope | None = None, *,
-                 index: SymbolIndex | None = None, signals=("anchor", "symbol", "keyword")):
+                 index: SymbolIndex | None = None,
+                 signals=("anchor", "symbol", "keyword", "content")):
+        # signals 约定：keyword = 路径/文件名评分；content = 内容撞词（旧版
+        # Test Agent 没有——keyword_only 消融基线须排除它，评审问题 2）
         root = Path(repo_root).resolve()  # 相对路径会让 scan/index 的 rel 计算全部失败
         if not root.is_dir():
             raise NotADirectoryError(f"repository root does not exist: {root}")
@@ -213,7 +219,7 @@ class CodeRetriever:
         if path_score:
             score += path_score
             reasons.append(f"path keywords (+{path_score})")
-        elif rel.endswith(tuple(_TEXT_CONTENT_SUFFIXES)):
+        elif "content" in self._signals and rel.endswith(tuple(_TEXT_CONTENT_SUFFIXES)):
             content_hits = self._content_keywords(rel, keywords)
             if content_hits:
                 credited = min(len(content_hits), KEYWORD_CONTENT_MAX)
@@ -287,8 +293,8 @@ def build_code_windows(
         if tokens:
             spans.extend(_content_spans(root, path, tokens))
         for start, end, reason in _merge_spans(spans)[:MAX_WINDOWS_PER_FILE]:
-            if budget <= 0:
-                break
+            if budget < WINDOW_HEADER_RESERVE:
+                break  # 剩余预算连头部都放不下：丢弃（硬预算，不超标渲染）
             window = _render_window(root, path, start, end, reason,
                                     min(max_window_chars, budget))
             budget -= len(window.text)
@@ -314,7 +320,7 @@ def _content_spans(root: Path, path: str, tokens: list[str]) -> list[tuple[int, 
     if not tokens:
         return []
     try:
-        raw = (root / path).read_bytes()
+        raw = (root / path).read_bytes()[:WINDOW_FILE_MAX_BYTES]
     except OSError:
         return []
     if b"\x00" in raw[:8192]:
@@ -368,9 +374,15 @@ def _merge_spans(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]
 
 def _render_window(root: Path, path: str, start: int, end: int,
                    reason: str, char_cap: int) -> CodeWindow:
-    """渲染单个窗口：头注释 + 行号内容；超预算截断并显式标记。"""
+    """渲染单个窗口：头注释 + 行号内容。字符预算为**硬上限**（评审问题 3）：
+
+    - 先预留固定开销（头部 + 截断标记），剩余全部给源码正文；
+    - shown_end 只按真实输出的源码行计算（截断提示不占行号）；
+    - 头部 reason 截到 120 字符（完整 reason 在 CodeWindow.reason 字段）；
+    - 兜底：组装后若仍超预算，从尾部逐行弹出直到满足。
+    """
     try:
-        raw = (root / path).read_bytes()
+        raw = (root / path).read_bytes()[:WINDOW_FILE_MAX_BYTES]
     except OSError as exc:
         return CodeWindow(path=path, start_line=0, end_line=0,
                           text=f"# {path} (unreadable: {type(exc).__name__})",
@@ -379,31 +391,47 @@ def _render_window(root: Path, path: str, start: int, end: int,
         return CodeWindow(path=path, start_line=0, end_line=0,
                           text=f"# {path} (binary file skipped)",
                           truncated=True, reason=reason)
+    # 有界读取：超大文件只读前 WINDOW_FILE_MAX_BYTES（性能护栏；行号在读取
+    # 范围内仍然正确，超出部分按"有界读取"语义截断）
+    raw = raw[:WINDOW_FILE_MAX_BYTES]
+    bounded = len(raw) == WINDOW_FILE_MAX_BYTES
     lines = raw.decode("utf-8", errors="replace").splitlines()
     total = len(lines)
-    if start > total:  # 锚定行号越界（错误行号）：回退文件头并记录
+    if start > total:  # 锚定行号越界（错误行号 / 有界读取之外）：回退文件头并记录
         start, end = 1, min(HEAD_FALLBACK_LINES, total)
-        reason = f"{reason}; anchor line beyond EOF, fell back to head"
+        reason = (f"{reason}; anchor line beyond "
+                  + ("bounded read" if bounded else "EOF") + ", fell back to head")
     end = min(end, total)
     start = max(1, start)
 
+    body_budget = max(0, char_cap - WINDOW_HEADER_RESERVE)
     body: list[str] = []
     truncated = False
     used = 0
     for number in range(start, end + 1):
         rendered = f"{number}\t{lines[number - 1]}"
-        if used + len(rendered) > char_cap:
+        if used + len(rendered) > body_budget:
             truncated = True
             break
         body.append(rendered)
         used += len(rendered)
+    marker = ""
     if truncated:
-        body.append(f"[...window clipped at {char_cap} chars; "
-                    f"requested lines {start}-{end}]")
+        marker = (f"[...window clipped at {char_cap} chars; "
+                  f"requested lines {start}-{end}]")
     shown_end = start + len(body) - 1 if body else start - 1
     header = f"# {path}, lines {start}-{shown_end}"
     if reason:
-        header += f"  ({reason})"
+        header += f"  ({reason[:120]}{'...' if len(reason) > 120 else ''})"
+    text = header + "\n" + "\n".join(body + ([marker] if marker else []))
+    # 硬上限兜底：头部/标记开销超出预留时，从正文尾部逐行弹出
+    while len(text) > char_cap and body:
+        body.pop()
+        shown_end = start + len(body) - 1 if body else start - 1
+        truncated = True
+        header = f"# {path}, lines {start}-{shown_end}"
+        if reason:
+            header += f"  ({reason[:120]}{'...' if len(reason) > 120 else ''})"
+        text = header + "\n" + "\n".join(body + ([marker] if marker else []))
     return CodeWindow(path=path, start_line=start, end_line=shown_end,
-                      text=header + "\n" + "\n".join(body),
-                      truncated=truncated, reason=reason)
+                      text=text, truncated=truncated, reason=reason)

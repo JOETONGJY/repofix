@@ -4,10 +4,13 @@
 构建 CodeRetriever → 用 dataset 的 problem_statement 检索 → 与 gold patch
 的生产文件/行范围对比 → 输出逐题结果与聚合指标。
 
-变体（评审 A/B/C 设计，同一数据集同一预算）：
-  keyword_only  仅关键词评分 + 文件头窗口   ≈ v0.5 之前的行为
-  kernel_head   统一内核全信号 + 文件头窗口  = v0.5.1
-  kernel_windows 统一内核 + 锚定/符号窗口    = v0.5.2（当前实现）
+变体（评审 A/B/C 设计，同一数据集同一预算）——**消融实验，不是历史版本
+复现**（评审问题 2：keyword_only 关闭旧版本没有的内容匹配、头窗口与旧版
+6000 字符头读不等价；跨变体结论只能表述为"同一评估框架内增加信号/窗口
+后检索指标如何变化"，不得宣称"比部署过的旧版提升 X%"）：
+  keyword_only   消融：仅路径/文件名评分 + 文件头窗口（无锚定/符号/内容）
+  kernel_head    统一内核全信号 + 文件头窗口                = v0.5.1
+  kernel_windows 统一内核 + 锚定/符号/内容命中行窗口        = v0.5.2+
 
 用法：python scripts/eval_retrieval.py --out benchmarks/swebench-mini/retrieval-eval.json
 """

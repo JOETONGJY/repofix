@@ -34,8 +34,8 @@ def test_parse_gold_patch_exact_added_lines():
     # 生产文件只含 services/calc.py；测试文件单独归类
     assert labels.files == ["services/calc.py"]
     assert labels.test_files == ["tests/test_calc.py"]
-    # 精确到新增行：+new_line() 与 +extra_step() 在新文件的第 12、13 行
-    assert labels.ranges["services/calc.py"] == [(11, 12)]  # 新行号从 hunk 头 10 起算
+    # 旧文件坐标：-old_line() 在原文件第 11 行（+ 替换锚定同一位置）
+    assert labels.ranges["services/calc.py"] == [(11, 11)]
 
 
 def test_parse_gold_patch_empty_and_module_level():
@@ -172,3 +172,50 @@ def test_class_docstring_labeled_class_not_module_level(tmp_path):
                  if lab != "module-level" and not lab.startswith("class:")]
              for p, ents in mapped.items()}
     assert spans["ridge.py"] == []  # 类级修改不进 Function Hit 分母
+
+
+def test_gold_coordinates_stay_in_original_frame():
+    """评审问题 1：补丁在修改点前插入 10 行时，gold 位置必须仍在原始坐标
+    （900 行附近），不漂移到新文件的 910。"""
+    hunk = ("diff --git a/big.py b/big.py\n"
+            "--- a/big.py\n+++ b/big.py\n"
+            "@@ -899,6 +899,16 @@\n"
+            " context_899\n"          # ctx old 899→900
+            "+inserted_1\n"            # 纯插入：锚定边界 old=900
+            "+inserted_2\n"
+            "+inserted_3\n"
+            "+inserted_4\n"
+            "+inserted_5\n"
+            "+inserted_6\n"
+            "+inserted_7\n"
+            "+inserted_8\n"
+            "+inserted_9\n"
+            "+inserted_10\n"           # old 仍停在 900
+            "-target_line_900\n"       # 被删行 = 原文件 900 ✓（插入不推进 old）
+            "+target_line_fixed\n"     # 替换块锚定 900
+            " context_901\n")          # ctx old 900→901
+    labels = parse_gold_patch("t", hunk)
+    # 全部落在原始 900：插入前移不漂移坐标，检索窗口 ±15/±40 必然命中
+    assert labels.ranges["big.py"] == [(900, 900)]
+
+
+def test_gold_pure_deletion_produces_ranges():
+    """纯删除补丁：被删行在原始文件坐标下精确存在（新坐标方案会得到空集）。"""
+    hunk = ("diff --git a/legacy.py b/legacy.py\n"
+            "--- a/legacy.py\n+++ b/legacy.py\n"
+            "@@ -5,2 +4,0 @@\n"
+            "-dead_code_a\n"
+            "-dead_code_b\n")
+    labels = parse_gold_patch("t", hunk)
+    assert labels.ranges["legacy.py"] == [(5, 6)]
+
+
+def test_gold_insertion_only_anchors_at_boundary():
+    hunk = ("diff --git a/mod.py b/mod.py\n"
+            "--- a/mod.py\n+++ b/mod.py\n"
+            "@@ -10,2 +10,3 @@\n"
+            " existing_a\n"      # ctx old 10→11
+            "+brand_new_line\n"  # 纯插入：锚定 11
+            " existing_b\n")     # ctx old 11→12
+    labels = parse_gold_patch("t", hunk)
+    assert labels.ranges["mod.py"] == [(11, 11)]
