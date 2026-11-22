@@ -41,8 +41,9 @@ from repofix.evaluation.retrieval_eval import (  # noqa: E402
     parse_gold_patch,
     picked_locations,
     summarize,
+    validate_cached_testbed,
 )
-from repofix.evaluation.swebench.workspace import extract_testbed  # noqa: E402
+from repofix.evaluation.swebench.workspace import extract_testbed, force_rmtree  # noqa: E402
 from repofix.workspace.docker_cli import DockerCli  # noqa: E402
 
 _SCOPE = TEST_AGENT_SCOPE
@@ -70,17 +71,35 @@ def load_dataset(dataset_dir: Path) -> dict[str, dict]:
 
 
 def ensure_testbed(cli: DockerCli, image: str, instance_id: str, base_commit: str,
-                   extract_root: Path) -> tuple[Path | None, str]:
-    """提取（含 base_commit checkout）或复用已有 testbed。返回 (路径, 错误)。"""
+                   extract_root: Path, stats: Counter | None = None) -> tuple[Path | None, str]:
+    """提取或复用 testbed（评审：缓存必须重验基线后才可复用）。
+
+    缓存校验：HEAD == base_commit 且工作区干净才复用；HEAD 漂移或被先前
+    运行污染 → 删除并重新提取（不做不可变副本的最小替代方案：重验 + 重提取）。
+    返回 (路径, 错误)。"""
+    def note(key: str) -> None:
+        if stats is not None:
+            stats[key] += 1
+
     dest = extract_root / instance_id
     if (dest / ".git").exists():
-        return dest, ""
+        ok, reason = validate_cached_testbed(dest, base_commit)
+        if ok:
+            note("cache_reused_validated")
+            return dest, ""
+        note("cache_invalid_reextracted")
+        force_rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)  # extract_testbed 要求目标目录已存在
     try:
         extract_testbed(cli, image, dest, base_commit=base_commit)
-        return dest, ""
     except Exception as exc:  # noqa: BLE001 —— 单任务提取失败不阻塞其余任务
         return None, f"{type(exc).__name__}: {str(exc)[:200]}"
+    # 新提取的副本同样校验（提取机制自身的 checkout 失败不容静默）
+    ok, reason = validate_cached_testbed(dest, base_commit)
+    if not ok:
+        return None, f"fresh extract failed validation: {reason}"
+    note("extracted_fresh")
+    return dest, ""
 
 
 def evaluate_variant(instance_id: str, variant: str, testbed_dir: Path,
@@ -139,6 +158,7 @@ def main() -> int:
 
     all_records: list[dict] = []
     skips: Counter = Counter()
+    cache_stats: Counter = Counter()  # 缓存重验/重提取计数（评审：基线状态可追溯）
     for index, instance_id in enumerate(instance_ids, start=1):
         row = dataset.get(instance_id)
         if row is None:
@@ -147,7 +167,7 @@ def main() -> int:
         labels = parse_gold_patch(instance_id, row["gold_patch"])
         labels.issue_text = row["problem_statement"]
         testbed, error = ensure_testbed(cli, row["image"], instance_id,
-                                        row["base_commit"], extract_root)
+                                        row["base_commit"], extract_root, cache_stats)
         if testbed is None:
             skips["extract_failed"] += 1
             all_records.append({"instance_id": instance_id, "variant": "",
@@ -200,6 +220,7 @@ def main() -> int:
         "scope": args.scope,
         "task_count": len(instance_ids),
         "skips": dict(skips),
+        "cache": dict(cache_stats),
         "summary": summary,
         "common_valid_summary": {
             "task_count": len(common_ids),

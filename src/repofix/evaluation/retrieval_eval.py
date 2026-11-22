@@ -26,6 +26,7 @@ new_files，检索原理上不可命中，不计入 File Recall 分母（评审 
 结论只能表述为"同一评估框架内增加信号/窗口后指标如何变化"。
 """
 import re
+import subprocess
 from dataclasses import dataclass, field
 
 from repofix.context.retrieval import CodeLocation
@@ -172,6 +173,7 @@ class TaskRetrievalEval:
     scan_miss: list[str] = field(default_factory=list)
     window_hit_files: list[str] = field(default_factory=list)
     function_hit: bool = False
+    function_applicable: bool = False  # gold 含函数级修改（Function Hit 适用子集）
     module_level_only: bool = False  # gold 全是模块级修改 → Function Hit 不适用
     truncated_on_gold: bool = False
     window_count: int = 0
@@ -187,10 +189,38 @@ class TaskRetrievalEval:
             "file_hit_any": self.file_hit_any, "file_hit_all": self.file_hit_all,
             "scan_miss": self.scan_miss, "window_hit_files": self.window_hit_files,
             "function_hit": self.function_hit,
+            "function_applicable": self.function_applicable,
             "module_level_only": self.module_level_only,
             "truncated_on_gold": self.truncated_on_gold,
             "window_count": self.window_count, "error": self.error,
         }
+
+
+def validate_cached_testbed(dest, base_commit: str) -> tuple[bool, str]:
+    """缓存 testbed 基线校验（评审：HEAD == base_commit 且工作区干净才复用）。
+
+    不可信缓存（HEAD 漂移 / 工作区被先前运行污染）一律拒绝复用，由调用方
+    重新提取。返回 (是否可复用, 拒绝原因)。"""
+    if not (dest / ".git").exists():
+        return False, "no cached .git"
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(dest),
+                              capture_output=True, text=True, timeout=60)
+        if head.returncode != 0:
+            return False, f"rev-parse failed: {head.stderr.strip()[:120]}"
+        if head.stdout.strip() != base_commit:
+            return False, (f"HEAD {head.stdout.strip()[:12]} != "
+                           f"base {base_commit[:12]}")
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=str(dest),
+                                capture_output=True, text=True, timeout=60)
+        if status.returncode != 0:
+            return False, f"status failed: {status.stderr.strip()[:120]}"
+        if status.stdout.strip():
+            return False, (f"worktree dirty: "
+                           f"{len(status.stdout.splitlines())} entries")
+        return True, ""
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"{type(exc).__name__}: {str(exc)[:120]}"
 
 
 def evaluate_retrieval(labels: GoldLabels, result, windows, *, top_k: int = 3) -> TaskRetrievalEval:
@@ -229,6 +259,9 @@ def evaluate_retrieval(labels: GoldLabels, result, windows, *, top_k: int = 3) -
         if all(label == "module-level" for _, _, label in entries)
     }
     evaluation.module_level_only = bool(module_level_files) and module_level_files == set(labels.files)
+    # Function Hit 适用子集（评审：分母要区分——模块级修改的任务不可能命中函数）
+    evaluation.function_applicable = any(
+        spans for spans in gold_function_spans.values())
     evaluation.window_count = len(windows)
     for window in windows:
         if window.path not in labels.ranges:
@@ -253,6 +286,8 @@ def summarize(records: list[TaskRetrievalEval]) -> dict:
 
     分母 = 无错误且非 impossible_for_retrieval 的任务；错误任务与
     新建文件任务分别报告数量，保证各变体分母可见、可对比。
+    Function Hit 双口径（评审：模块级修改的任务不可能命中函数）——
+    全体有效任务 + 仅函数级适用任务（function_applicable）子集。
     """
     total_assigned = len(records)
     errors = [r for r in records if r.error]
@@ -260,10 +295,14 @@ def summarize(records: list[TaskRetrievalEval]) -> dict:
     valid = [r for r in records if not r.error and not r.impossible_for_retrieval]
     total = len(valid)
     new_file_tasks = [r for r in records if r.new_file_required and not r.error]
+    function_applicable = [r for r in valid if r.function_applicable]
 
     def rate(predicate) -> float:
         return round(sum(1 for r in valid if predicate(r)) / total, 3) if total else 0.0
 
+    fa_total = len(function_applicable)
+    fa_rate = (round(sum(1 for r in function_applicable if r.function_hit) / fa_total, 3)
+               if fa_total else 0.0)
     return {
         "tasks_total": total_assigned,
         "tasks_valid": total,
@@ -276,6 +315,8 @@ def summarize(records: list[TaskRetrievalEval]) -> dict:
         "scan_miss_rate": rate(lambda r: bool(r.scan_miss)),
         "window_hit@3": rate(lambda r: bool(r.window_hit_files)),
         "function_hit@3": rate(lambda r: r.function_hit),
+        "function_hit@3_function_applicable": fa_rate,
+        "tasks_function_applicable": fa_total,
         "module_level_only_rate": rate(lambda r: r.module_level_only),
         "truncated_on_gold_rate": rate(lambda r: r.truncated_on_gold),
         "errors": [f"{r.instance_id}: {r.error}" for r in errors][:10],

@@ -292,3 +292,110 @@ def test_picked_locations_structural_fallback():
     picked = picked_locations(result, 2)
     assert [loc.path for loc in picked] == ["a/shallow.py", "b/deep/x.py"]
     assert picked[0].tier == 3 and picked[0].score == 0
+
+
+class TestCachedTestbedValidation:
+    """评审：缓存 testbed 必须重验基线（HEAD==base 且干净）才可复用。"""
+
+    def _make_commit(self, tmp_path, name="repo"):
+        import subprocess
+
+        repo = tmp_path / name
+        repo.mkdir()
+        for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                     ["config", "user.name", "t"]):
+            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+        (repo / "f.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "i"], cwd=repo, check=True,
+                       capture_output=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True)
+        return repo, head.stdout.strip()
+
+    def test_valid_cache_accepted(self, tmp_path):
+        from repofix.evaluation.retrieval_eval import validate_cached_testbed
+
+        repo, head = self._make_commit(tmp_path)
+        ok, reason = validate_cached_testbed(repo, head)
+        assert ok is True and reason == ""
+
+    def test_head_mismatch_rejected(self, tmp_path):
+        from repofix.evaluation.retrieval_eval import validate_cached_testbed
+
+        repo, _ = self._make_commit(tmp_path)
+        ok, reason = validate_cached_testbed(repo, "0" * 40)
+        assert ok is False
+        assert "HEAD" in reason and "!= base" in reason
+
+    def test_dirty_worktree_rejected(self, tmp_path):
+        from repofix.evaluation.retrieval_eval import validate_cached_testbed
+
+        repo, head = self._make_commit(tmp_path)
+        (repo / "f.py").write_text("TAMPERED\n", encoding="utf-8")
+        ok, reason = validate_cached_testbed(repo, head)
+        assert ok is False
+        assert "dirty" in reason
+
+    def test_missing_git_rejected(self, tmp_path):
+        from repofix.evaluation.retrieval_eval import validate_cached_testbed
+
+        ok, reason = validate_cached_testbed(tmp_path / "nope", "0" * 40)
+        assert ok is False and ".git" in reason
+
+
+def test_function_hit_dual_denominators(tmp_path):
+    """评审：Function Hit 需双口径——全体有效任务 + 仅函数级适用任务。"""
+    from repofix.context.symbol_index import build_symbol_index
+    from repofix.evaluation.retrieval_eval import map_ranges_to_symbols
+
+    hunk_fn = (
+        "diff --git a/svc.py b/svc.py\n"
+        "--- a/svc.py\n+++ b/svc.py\n"
+        "@@ -10,1 +10,1 @@\n"
+        "-    old_body()\n"
+        "+    new_body()\n"
+    )
+    hunk_const = (
+        "diff --git a/const.py b/const.py\n"
+        "--- a/const.py\n+++ b/const.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-MAX = 10\n"
+        "+MAX = 20\n"
+    )
+    root = make_plain_repo(tmp_path, {
+        "svc.py": "\n" * 9 + "def compute(x):\n    old_body()\n    return x\n",
+        "const.py": "MAX = 10\n",
+    })
+    index = build_symbol_index(root)
+
+    labels_mixed = parse_gold_patch("t1", hunk_fn + hunk_const)
+    labels_mixed.labels = map_ranges_to_symbols(labels_mixed.ranges, index)
+
+    # 命中函数级 gold（svc.py）的任务
+    hit_result = _result(["svc.py"], scanned=["svc.py"])
+    record_hit = evaluate_retrieval(labels_mixed, hit_result,
+                                    [_window("svc.py", 1, 60)])
+    assert record_hit.function_applicable is True
+    assert record_hit.function_hit is True
+
+    # 只命中模块级文件（const.py）：混合 gold 仍适用，但函数级未命中
+    miss_result = _result(["const.py"], scanned=["const.py"])
+    record_miss = evaluate_retrieval(labels_mixed, miss_result, [])
+    assert record_miss.function_applicable is True
+    assert record_miss.function_hit is False
+
+    # 纯模块级 gold：Function Hit 不适用
+    labels_module = parse_gold_patch("t2", hunk_const)
+    labels_module.labels = map_ranges_to_symbols(labels_module.ranges, index)
+    module_record = evaluate_retrieval(labels_module, _result(["const.py"]), [])
+    assert module_record.function_applicable is False
+    assert module_record.module_level_only is True
+
+    summary = summarize([record_hit, record_miss, module_record])
+    assert summary["tasks_valid"] == 3
+    assert summary["tasks_function_applicable"] == 2  # 适用子集分母
+    assert summary["function_hit@3"] == round(1 / 3, 3)  # 全体口径
+    assert summary["function_hit@3_function_applicable"] == 0.5  # 适用子集口径
+
+
